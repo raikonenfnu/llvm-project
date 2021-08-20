@@ -34,7 +34,7 @@ add_mlir_dialect_library(MLIRGPUOps
   MLIRSupport
   MLIRLLVMIR
   )
-
+message(STATUS "LIB:${MLIR_SOURCE_DIR}/../lld/include")
 add_mlir_dialect_library(MLIRGPUTransforms
   Transforms/AllReduceLowering.cpp
   Transforms/AsyncRegionRewriter.cpp
@@ -47,6 +47,7 @@ add_mlir_dialect_library(MLIRGPUTransforms
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Dialect/GPU
+  ${MLIR_SOURCE_DIR}/../lld/include
 
   LINK_COMPONENTS
   Core
@@ -160,6 +161,27 @@ if(MLIR_ENABLE_ROCM_RUNNER)
     lldELF
     MLIRROCDLToLLVMIRTranslation
   )
+
+target_compile_definitions(obj.MLIRGPUTransforms
+  PRIVATE
+  __HIP_PLATFORM_HCC__
+  __ROCM_PATH__="${ROCM_PATH}"
+  MLIR_GPU_TO_HSACO_PASS_ENABLE=1
+)
+
+message(STATUS "DIR:${MLIR_SOURCE_DIR}/../lld/include")
+target_include_directories(obj.MLIRGPUTransforms
+  PRIVATE
+  ${MLIR_SOURCE_DIR}/../lld/include
+  ${HIP_PATH}/include
+  ${ROCM_PATH}/include
+)
+
+target_link_libraries(MLIRGPUTransforms
+  PRIVATE
+  lldELF
+  MLIRROCDLToLLVMIRTranslation
+)
 
   # Link lldELF also to libmlir.so. Create an alias that starts with LLVM
   # because LINK_COMPONENTS elements are implicitly prefixed with LLVM.

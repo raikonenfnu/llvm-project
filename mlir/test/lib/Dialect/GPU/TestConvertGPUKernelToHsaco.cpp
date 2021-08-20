@@ -37,7 +37,7 @@ private:
 
 TestSerializeToHsacoPass::TestSerializeToHsacoPass() {
   this->triple = "amdgcn-amd-amdhsa";
-  this->chip = "gfx900";
+  this->chip = "gfx908";
 }
 
 void TestSerializeToHsacoPass::getDependentDialects(
