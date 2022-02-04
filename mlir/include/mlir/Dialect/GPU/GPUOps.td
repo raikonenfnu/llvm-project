@@ -1235,4 +1235,51 @@ def GPU_SubgroupMmaElementwiseOp : GPU_Op<"subgroup_mma_elementwise",
   }];
 }
 
+def GPU_DeviceAsyncCpOp : GPU_Op<"device_async_cp", [AttrSizedOperandSegments]> {
+
+  let summary = "GPU memcpy operation";
+
+  let description = [{
+
+  }];
+
+  let arguments = (ins Arg<AnyMemRef, "", [MemWrite]>:$dst,
+                       Variadic<Index>:$dstIndices,
+                       Arg<AnyMemRef, "", [MemRead]>:$src,
+                       Variadic<Index>:$srcIndices,
+                       IndexAttr:$size);
+  let assemblyFormat = [{
+    $src `[` $srcIndices `]` `,` $dst `[` $dstIndices `]` attr-dict
+      `:` type($src) `to` type($dst)
+  }];
+}
+
+def GPU_DeviceAsyncCommitOp : GPU_Op<"device_async_commit", []> {
+
+  let summary = "GPU memcpy operation";
+
+  let description = [{
+
+  }];
+
+  let results = (outs GPU_DeviceAsyncToken:$asyncToken);
+
+  let assemblyFormat = [{
+    attr-dict
+  }];
+}
+
+def GPU_DeviceAsyncWaitOp : GPU_Op<"device_async_wait", []> {
+  let summary = "Wait for async gpu ops to complete.";
+  let description = [{
+  }];
+
+  let arguments = (ins GPU_DeviceAsyncToken:$asyncDependencies,
+                       OptionalAttr<I32Attr>:$numGroups);
+
+  let assemblyFormat = [{
+    $asyncDependencies attr-dict
+  }];
+}
+
 #endif // GPU_OPS

@@ -121,6 +121,76 @@ struct GPUShuffleOpLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp> {
   }
 };
 
+struct GPUAsyncCp
+    : public ConvertOpToLLVMPattern<gpu::DeviceAsyncCpOp> {
+  using ConvertOpToLLVMPattern<gpu::DeviceAsyncCpOp>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(gpu::DeviceAsyncCpOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op->getLoc();
+    auto dstMemrefType = op.dst().getType().cast<MemRefType>();
+    Value dstPtr = getStridedElementPtr(loc, dstMemrefType, adaptor.dst(),
+                                        adaptor.dstIndices(), rewriter);
+    auto i8Ty = IntegerType::get(op.getContext(), 8);
+    auto dstPointerType =
+        LLVM::LLVMPointerType::get(i8Ty, dstMemrefType.getMemorySpaceAsInt());
+    dstPtr = rewriter.create<LLVM::BitcastOp>(loc, dstPointerType, dstPtr);
+
+    auto srcMemrefType = op.src().getType().cast<MemRefType>();
+
+    Value scrPtr = getStridedElementPtr(loc, srcMemrefType, adaptor.src(),
+                                        adaptor.srcIndices(), rewriter);
+    auto srcPointerType =
+        LLVM::LLVMPointerType::get(i8Ty, srcMemrefType.getMemorySpaceAsInt());
+    scrPtr = rewriter.create<LLVM::BitcastOp>(loc, srcPointerType, scrPtr);
+    // Intrinsics takes a global pointer so we need an address space cast.
+    auto srcPointerGlobalType = LLVM::LLVMPointerType::get(i8Ty, 1);
+    scrPtr = rewriter.create<LLVM::AddrSpaceCastOp>(loc, srcPointerGlobalType,
+                                                    scrPtr);
+
+    rewriter.replaceOpWithNewOp<NVVM::CpAsyncOp>(
+        op, dstPtr, scrPtr,
+        rewriter.getI32IntegerAttr(adaptor.size().getZExtValue()));
+    return success();
+  }
+};
+
+struct GPUAsyncCommit
+    : public ConvertOpToLLVMPattern<gpu::DeviceAsyncCommitOp> {
+  using ConvertOpToLLVMPattern<gpu::DeviceAsyncCommitOp>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(gpu::DeviceAsyncCommitOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.create<NVVM::CpAsyncCommitGroupOp>(op.getLoc());
+    Value zero = rewriter.create<LLVM::ConstantOp>(
+        op->getLoc(), IntegerType::get(op.getContext(), 32),
+        rewriter.getI32IntegerAttr(0));
+    rewriter.replaceOp(op, zero);
+    return success();
+  }
+};
+
+struct GPUAsyncWait
+    : public ConvertOpToLLVMPattern<gpu::DeviceAsyncWaitOp> {
+  using ConvertOpToLLVMPattern<gpu::DeviceAsyncWaitOp>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(gpu::DeviceAsyncWaitOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    int32_t numGroups = adaptor.numGroups() ? *adaptor.numGroups() : 0;
+    rewriter.create<NVVM::CpAsyncWaitGroupOp>(op.getLoc(), numGroups);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+static void populateAsyncConversionPatterns(LLVMTypeConverter &converter,
+                                            RewritePatternSet &patterns) {
+  patterns.add<GPUAsyncCp, GPUAsyncCommit, GPUAsyncWait>(converter);
+}
+
 /// Import the GPU Ops to NVVM Patterns.
 #include "GPUToNVVM.cpp.inc"
 
@@ -162,6 +232,9 @@ struct LowerGpuOpsToNVVMOpsPass
     // Lowering for MMAMatrixType.
     converter.addConversion([&](gpu::MMAMatrixType type) -> Type {
       return convertMMAToLLVMType(type);
+    });
+    converter.addConversion([&](gpu::DeviceAsyncTokenType type) -> Type {
+      return converter.convertType(IntegerType::get(type.getContext(), 32));
     });
     RewritePatternSet patterns(m.getContext());
     RewritePatternSet llvmPatterns(m.getContext());
@@ -258,6 +331,7 @@ void mlir::populateGpuToNVVMConversionPatterns(LLVMTypeConverter &converter,
                                                    "__nv_sqrt");
   patterns.add<OpToFuncCallLowering<math::TanhOp>>(converter, "__nv_tanhf",
                                                    "__nv_tanh");
+  populateAsyncConversionPatterns(converter, patterns);
 }
 
 std::unique_ptr<OperationPass<gpu::GPUModuleOp>>

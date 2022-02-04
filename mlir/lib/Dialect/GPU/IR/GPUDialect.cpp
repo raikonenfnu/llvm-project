@@ -118,6 +118,7 @@ struct GPUInlinerInterface : public DialectInlinerInterface {
 void GPUDialect::initialize() {
   addTypes<AsyncTokenType>();
   addTypes<MMAMatrixType>();
+  addTypes<DeviceAsyncTokenType>();
   addOperations<
 #define GET_OP_LIST
 #include "mlir/Dialect/GPU/GPUOps.cpp.inc"
@@ -139,6 +140,9 @@ Type GPUDialect::parseType(DialectAsmParser &parser) const {
   // Handle 'async token' types.
   if (keyword == "async.token")
     return AsyncTokenType::get(context);
+  // Handle 'device async token' types.
+  if (keyword == "device.async.token")
+    return DeviceAsyncTokenType::get(context);
 
   if (keyword == "mma_matrix") {
     SMLoc beginLoc = parser.getNameLoc();
@@ -179,6 +183,7 @@ Type GPUDialect::parseType(DialectAsmParser &parser) const {
 void GPUDialect::printType(Type type, DialectAsmPrinter &os) const {
   TypeSwitch<Type>(type)
       .Case<AsyncTokenType>([&](Type) { os << "async.token"; })
+      .Case<DeviceAsyncTokenType>([&](Type) { os << "device.async.token"; })
       .Case<MMAMatrixType>([&](MMAMatrixType fragTy) {
         os << "mma_matrix<";
         auto shape = fragTy.getShape();

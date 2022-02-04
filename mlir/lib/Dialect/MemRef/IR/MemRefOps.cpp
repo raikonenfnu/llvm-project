@@ -1693,11 +1693,18 @@ Type SubViewOp::inferResultType(MemRefType sourceMemRefType,
   }
 
   // The type is now known.
-  return MemRefType::get(
+  MemRefType memrefType = MemRefType::get(
       staticSizes, sourceMemRefType.getElementType(),
       makeStridedLinearLayoutMap(targetStrides, targetOffset,
                                  sourceMemRefType.getContext()),
       sourceMemRefType.getMemorySpace());
+  if(isStaticShapeAndContiguousRowMajor(memrefType)) {
+    memrefType = MemRefType::get(
+      staticSizes, sourceMemRefType.getElementType(),
+      MemRefLayoutAttrInterface(),
+      sourceMemRefType.getMemorySpace());
+  }
+  return memrefType;
 }
 
 Type SubViewOp::inferResultType(MemRefType sourceMemRefType,
@@ -1736,7 +1743,9 @@ Type SubViewOp::inferRankReducedResultType(unsigned resultRank,
         projectedShape.push_back(shape[pos]);
 
     AffineMap map = inferredType.getLayout().getAffineMap();
-    if (!map.isIdentity())
+    if (map.isIdentity())
+      map = {};
+    else
       map = getProjectedMap(map, dimsToProject);
     inferredType =
         MemRefType::get(projectedShape, inferredType.getElementType(), map,
@@ -2022,7 +2031,9 @@ static MemRefType getCanonicalSubViewResultType(
     shape.push_back(sizes.value());
   }
   AffineMap layoutMap = nonRankReducedType.getLayout().getAffineMap();
-  if (!layoutMap.isIdentity())
+  if (layoutMap.isIdentity())
+    layoutMap = {};
+  else
     layoutMap = getProjectedMap(layoutMap, unusedDims.getValue());
   return MemRefType::get(shape, nonRankReducedType.getElementType(), layoutMap,
                          nonRankReducedType.getMemorySpace());

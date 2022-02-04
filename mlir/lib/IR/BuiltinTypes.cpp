@@ -1026,12 +1026,14 @@ static AffineExpr getOffsetExpr(MemRefType memrefType) {
 static MemRefType makeContiguousRowMajorMemRefType(MLIRContext *context,
                                                    ArrayRef<int64_t> shape,
                                                    Type elementType,
-                                                   AffineExpr offset) {
+                                                   AffineExpr offset,
+                                                   Attribute memorySpace) {
   AffineExpr canonical = makeCanonicalStridedLayoutExpr(shape, context);
   AffineExpr contiguousRowMajor = canonical + offset;
   AffineMap contiguousRowMajorMap =
       AffineMap::inferFromExprList({contiguousRowMajor})[0];
-  return MemRefType::get(shape, elementType, contiguousRowMajorMap);
+  return MemRefType::get(shape, elementType, contiguousRowMajorMap,
+                         memorySpace);
 }
 
 /// Helper determining if a memref is static-shape and contiguous-row-major
@@ -1043,7 +1045,8 @@ bool mlir::isStaticShapeAndContiguousRowMajor(MemRefType memrefType) {
   AffineExpr offset = getOffsetExpr(memrefType);
   MemRefType contiguousRowMajorMemRefType = makeContiguousRowMajorMemRefType(
       memrefType.getContext(), memrefType.getShape(),
-      memrefType.getElementType(), offset);
-  return canonicalizeStridedLayout(memrefType) ==
-         canonicalizeStridedLayout(contiguousRowMajorMemRefType);
+      memrefType.getElementType(), offset, memrefType.getMemorySpace());
+  auto typea = canonicalizeStridedLayout(memrefType);
+  auto typeb = canonicalizeStridedLayout(contiguousRowMajorMemRefType);
+  return typea == typeb;
 }
