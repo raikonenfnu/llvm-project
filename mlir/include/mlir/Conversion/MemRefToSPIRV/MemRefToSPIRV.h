@@ -25,6 +25,8 @@ namespace spirv {
 using MemorySpaceToStorageClassMap = DenseMap<unsigned, spirv::StorageClass>;
 /// Returns the default map for targeting Vulkan-flavored SPIR-V.
 MemorySpaceToStorageClassMap getDefaultVulkanStorageClassMap();
+/// Returns the default map for targeting OpenCL-flavored SPIR-V.
+MemorySpaceToStorageClassMap getDefaultOpenCLStorageClassMap();
 
 /// Type converter for converting numeric MemRef memory spaces into SPIR-V
 /// symbolic ones.
