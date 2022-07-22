@@ -139,6 +139,7 @@ struct VectorExtractStridedSliceOpConvert final
   }
 };
 
+template <class FMAOp>
 struct VectorFmaOpConvert final : public OpConversionPattern<vector::FMAOp> {
   using OpConversionPattern::OpConversionPattern;
 
@@ -148,7 +149,7 @@ struct VectorFmaOpConvert final : public OpConversionPattern<vector::FMAOp> {
     Type dstType = getTypeConverter()->convertType(fmaOp.getType());
     if (!dstType)
       return failure();
-    rewriter.replaceOpWithNewOp<spirv::GLFmaOp>(
+    rewriter.replaceOpWithNewOp<FMAOp>(
         fmaOp, dstType, adaptor.getLhs(), adaptor.getRhs(), adaptor.getAcc());
     return success();
   }
@@ -380,7 +381,8 @@ void mlir::populateVectorToSPIRVPatterns(SPIRVTypeConverter &typeConverter,
                                          RewritePatternSet &patterns) {
   patterns.add<VectorBitcastConvert, VectorBroadcastConvert,
                VectorExtractElementOpConvert, VectorExtractOpConvert,
-               VectorExtractStridedSliceOpConvert, VectorFmaOpConvert,
+               VectorExtractStridedSliceOpConvert, VectorFmaOpConvert<spirv::GLFmaOp>,
+               VectorFmaOpConvert<spirv::CLFmaOp>,
                VectorInsertElementOpConvert, VectorInsertOpConvert,
                VectorReductionPattern, VectorInsertStridedSliceOpConvert,
                VectorShuffleOpConvert, VectorSplatPattern>(

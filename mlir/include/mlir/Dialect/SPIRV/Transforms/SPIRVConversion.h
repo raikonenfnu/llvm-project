@@ -15,6 +15,7 @@
 
 #include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVTypes.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
 #include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "llvm/ADT/SmallSet.h"
@@ -55,6 +56,9 @@ public:
     /// The number of bits to store a boolean value. It is eight bits by
     /// default.
     unsigned boolNumBits{8};
+
+    /// Has kernel capability a.k.a uses OpenCL flavored SPIRV rather than GLSL/Vulkan.
+    bool hasKernelCapability{false};
 
     // Note: we need this instead of inline initializers because of
     // https://bugs.llvm.org/show_bug.cgi?id=36684
@@ -161,6 +165,13 @@ Value linearizeIndex(ValueRange indices, ArrayRef<int64_t> strides,
 // TODO: This method assumes that the `baseType` is a MemRefType with AffineMap
 // that has static strides. Extend to handle dynamic strides.
 spirv::AccessChainOp getElementPtr(SPIRVTypeConverter &typeConverter,
+                                   MemRefType baseType, Value basePtr,
+                                   ValueRange indices, Location loc,
+                                   OpBuilder &builder);
+
+// TODO: This method assumes that the `baseType` is a MemRefType with AffineMap
+// that has static strides. Extend to handle dynamic strides.
+spirv::PtrAccessChainOp getElementPtrDirect(SPIRVTypeConverter &typeConverter,
                                    MemRefType baseType, Value basePtr,
                                    ValueRange indices, Location loc,
                                    OpBuilder &builder);
