@@ -973,6 +973,7 @@ static void buildLogicalUnaryOp(OpBuilder &builder, OperationState &state,
 static Type getElementPtrType(Type type, ValueRange indices, Location baseLoc) {
   auto ptrType = type.dyn_cast<spirv::PointerType>();
   if (!ptrType) {
+    llvm::outs()<<"not pointer error";
     emitError(baseLoc, "'spv.AccessChain' op expected a pointer "
                        "to composite type, but provided ")
         << type;
@@ -986,6 +987,8 @@ static Type getElementPtrType(Type type, ValueRange indices, Location baseLoc) {
   for (auto indexSSA : indices) {
     auto cType = resultType.dyn_cast<spirv::CompositeType>();
     if (!cType) {
+      llvm::outs()<<"original: "<<type<<"\n";
+      llvm::outs()<<resultType<<"is not composite error\n";
       emitError(baseLoc,
                 "'spv.AccessChain' op cannot extract from non-composite type ")
           << resultType << " with index " << index;
@@ -995,6 +998,7 @@ static Type getElementPtrType(Type type, ValueRange indices, Location baseLoc) {
     if (resultType.isa<spirv::StructType>()) {
       Operation *op = indexSSA.getDefiningOp();
       if (!op) {
+        llvm::outs()<<"not struct error\n";
         emitError(baseLoc, "'spv.AccessChain' op index must be an "
                            "integer spv.Constant to access "
                            "element of spv.struct");
@@ -1004,6 +1008,7 @@ static Type getElementPtrType(Type type, ValueRange indices, Location baseLoc) {
       // TODO: this should be relaxed to allow
       // integer literals of other bitwidths.
       if (failed(extractValueFromConstOp(op, index))) {
+        llvm::outs()<<"extractValueFromConstOp error\n";
         emitError(baseLoc,
                   "'spv.AccessChain' index must be an integer spv.Constant to "
                   "access element of spv.struct, but provided ")
@@ -1011,6 +1016,7 @@ static Type getElementPtrType(Type type, ValueRange indices, Location baseLoc) {
         return nullptr;
       }
       if (index < 0 || static_cast<uint64_t>(index) >= cType.getNumElements()) {
+        llvm::outs()<<"out of bound error\n";
         emitError(baseLoc, "'spv.AccessChain' op index ")
             << index << " out of bounds for " << resultType;
         return nullptr;

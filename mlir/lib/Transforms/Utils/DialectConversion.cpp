@@ -2720,6 +2720,7 @@ static LogicalResult legalizeUnresolvedMaterialization(
     return success();
 
   // We currently only handle target materializations here.
+  llvm::outs()<<"Op being converted"<<op<<"\n";
   OpResult opResult = op->getOpResult(0);
   Operation::operand_range inputOperands = op.getOperands();
   Type outputType = opResult.getType();
@@ -2779,11 +2780,15 @@ static LogicalResult legalizeUnresolvedMaterialization(
           rewriter, op->getLoc(), mat.getOrigOutputType(), inputOperands);
       if (newMaterialization)
         break;
+      else {
+        llvm::outs()<<"wut materialize failed :o\n";
+      }
 
       // If an argument materialization failed, fallback to trying a target
       // materialization.
       LLVM_FALLTHROUGH;
     case UnresolvedMaterialization::Target:
+      llvm::outs()<<"UnresolvedMaterialization!\n";
       newMaterialization = converter->materializeTargetConversion(
           rewriter, op->getLoc(), outputType, inputOperands);
       break;
@@ -3042,9 +3047,15 @@ LogicalResult TypeConverter::convertSignatureArgs(TypeRange types,
 Value TypeConverter::materializeConversion(
     MutableArrayRef<MaterializationCallbackFn> materializations,
     OpBuilder &builder, Location loc, Type resultType, ValueRange inputs) {
-  for (MaterializationCallbackFn &fn : llvm::reverse(materializations))
+  llvm::outs()<<"materializing:"<<materializations.size()<<"\n";
+  int iter = 0;
+  for (MaterializationCallbackFn &fn : llvm::reverse(materializations)) {
+    llvm::outs()<<"trying fn number"<<resultType<<"\n";
+    for (auto val : inputs) llvm::outs()<<val<<"\n";
     if (Optional<Value> result = fn(builder, resultType, inputs, loc))
       return *result;
+    iter++;
+  }
   return nullptr;
 }
 

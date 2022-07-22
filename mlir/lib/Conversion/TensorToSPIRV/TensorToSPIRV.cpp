@@ -67,10 +67,12 @@ public:
                                            spirv::StorageClass::Function);
 
     spirv::VariableOp varOp;
+    spirv::StoreOp storeOp;
     if (adaptor.getTensor().getDefiningOp<spirv::ConstantOp>()) {
       varOp = rewriter.create<spirv::VariableOp>(
           loc, varType, spirv::StorageClass::Function,
-          /*initializer=*/adaptor.getTensor());
+          /*initializer=*/nullptr);
+      storeOp = rewriter.create<spirv::StoreOp>(loc, varOp, adaptor.getTensor());
     } else {
       // Need to store the value to the local variable. It's questionable
       // whether we want to support such case though.
