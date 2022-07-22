@@ -23,6 +23,11 @@ class ModuleOp;
 /// storage classes. The mapping is read from the command-line option.
 std::unique_ptr<OperationPass<ModuleOp>> createMapMemRefStorageClassPass();
 
+// Let user pass custom storage map.
+using MemorySpaceToStorageClassMap = DenseMap<unsigned, spirv::StorageClass>;
+std::unique_ptr<OperationPass<ModuleOp>> createMapMemRefStorageClassPass(
+    const MemorySpaceToStorageClassMap &memorySpaceMap);
+
 /// Creates a pass to convert MemRef ops to SPIR-V ops.
 std::unique_ptr<OperationPass<ModuleOp>> createConvertMemRefToSPIRVPass();
 
