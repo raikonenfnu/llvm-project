@@ -90,12 +90,10 @@ static Value shiftValue(Location loc, Value value, Value offset, Value mask,
 /// can be lowered to SPIR-V.
 static bool isAllocationSupported(Operation *allocOp, MemRefType type) {
   if (isa<memref::AllocOp, memref::DeallocOp>(allocOp)) {
-    if (SPIRVTypeConverter::getMemorySpaceForStorageClass(
-            spirv::StorageClass::Workgroup) != type.getMemorySpaceAsInt())
+    if (spirv::StorageClass::Workgroup != static_cast<spirv::StorageClass>(type.getMemorySpaceAsInt()))
       return false;
   } else if (isa<memref::AllocaOp>(allocOp)) {
-    if (SPIRVTypeConverter::getMemorySpaceForStorageClass(
-            spirv::StorageClass::Function) != type.getMemorySpaceAsInt())
+    if (spirv::StorageClass::Function != static_cast<spirv::StorageClass>(type.getMemorySpaceAsInt()))
       return false;
   } else {
     return false;
