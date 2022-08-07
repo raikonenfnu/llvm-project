@@ -373,6 +373,59 @@ static Type convertTensorType(const spirv::TargetEnv &targetEnv,
   return spirv::ArrayType::get(arrayElemType, arrayElemCount);
 }
 
+bool isValidMemorySpace (spirv::StorageClass memorySpace) {
+  switch(memorySpace) {
+  case spirv::StorageClass::Generic:
+    return true;
+  case spirv::StorageClass::StorageBuffer:
+    return true;
+  case spirv::StorageClass::Workgroup:
+    return true;
+  case spirv::StorageClass::Uniform:
+    return true;
+  case spirv::StorageClass::Private:
+    return true;
+  case spirv::StorageClass::Function:
+    return true;
+  case spirv::StorageClass::PushConstant:
+    return true;
+  case spirv::StorageClass::UniformConstant:
+    return true;
+  case spirv::StorageClass::Input:
+    return true;
+  case spirv::StorageClass::Output:
+    return true;
+  case spirv::StorageClass::CrossWorkgroup:
+    return true;
+  case spirv::StorageClass::AtomicCounter:
+    return true;
+  case spirv::StorageClass::Image:
+    return true;
+  case spirv::StorageClass::CallableDataKHR:
+    return true;
+  case spirv::StorageClass::IncomingCallableDataKHR:
+    return true;
+  case spirv::StorageClass::RayPayloadKHR:
+    return true;
+  case spirv::StorageClass::HitAttributeKHR:
+    return true;
+  case spirv::StorageClass::IncomingRayPayloadKHR:
+    return true;
+  case spirv::StorageClass::ShaderRecordBufferKHR:
+    return true;
+  case spirv::StorageClass::PhysicalStorageBuffer:
+    return true;
+  case spirv::StorageClass::CodeSectionINTEL:
+    return true;
+  case spirv::StorageClass::DeviceOnlyINTEL:
+    return true;
+  case spirv::StorageClass::HostOnlyINTEL:
+    return true;
+  default:
+    return false;
+  }
+}
+
 static Type convertBoolMemrefType(const spirv::TargetEnv &targetEnv,
                                   const SPIRVTypeConverter::Options &options,
                                   MemRefType type) {
@@ -383,6 +436,7 @@ static Type convertBoolMemrefType(const spirv::TargetEnv &targetEnv,
   // type.getMemorySpaceAsInt() is valid.
   spirv::StorageClass storageClassVal{type.getMemorySpaceAsInt()};
   Optional<spirv::StorageClass> storageClass = storageClassVal;
+  assert (isValidMemorySpace(*storageClass) && "Invalid memory space is being used.");
   if (!storageClass) {
     LLVM_DEBUG(llvm::dbgs()
                << type << " illegal: cannot convert memory space\n");
@@ -436,6 +490,7 @@ static Type convertMemrefType(const spirv::TargetEnv &targetEnv,
   // type.getMemorySpaceAsInt() is valid.
   spirv::StorageClass storageClassVal{type.getMemorySpaceAsInt()};
   Optional<spirv::StorageClass> storageClass = storageClassVal;
+  assert (isValidMemorySpace(*storageClass) && "Invalid memory space is being used.");
   // llvm::outs()<<"type:"<testStr<<"\n";
   // Optional<spirv::StorageClass> storageClass =
   //     SPIRVTypeConverter::getStorageClassForMemorySpace(
