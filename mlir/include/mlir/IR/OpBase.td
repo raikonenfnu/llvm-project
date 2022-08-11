@@ -2278,7 +2278,9 @@ class ElementCount<string name> :
 class ElementType<string name> : StrFunc<"getElementTypeOrSelf($" # name # ")">;
 
 class AllMatchPred<list<string> values> :
-    CPred<"::llvm::is_splat(::llvm::makeArrayRef({"
+    CPred<"::llvm::is_splat(::llvm::makeArrayRef<std::conditional_t<"
+            # "std::is_base_of<::mlir::Type, decltype(" # !head(values) # ")>::value,"
+            # "::mlir::Type, decltype(" # !head(values) # ")>>({"
           # !interleave(values, ", ") #"}))">;
 
 class AllMatch<list<string> values, string summary> :
