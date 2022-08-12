@@ -852,9 +852,11 @@ LogicalResult ExtractSliceOfPadTensorSwapPattern::matchAndRewrite(
 // and then turning back to named ops. But for now it's fine to have a few
 // patterns matching special ops to get started.
 
-FailureOr<Conv1DNwcWcfOp>
-DownscaleSizeOneWindowed2DConvolution::returningMatchAndRewrite(
-    linalg::Conv2DNhwcHwcfOp convOp, PatternRewriter &rewriter) const {
+template <typename Conv2DOpType, typename Conv1DOpType>
+FailureOr<Conv1DOpType>
+DownscaleSizeOneWindowed2DConvolution<Conv2DOpType, Conv1DOpType>::
+    returningMatchAndRewrite(Conv2DOpType convOp,
+                             PatternRewriter &rewriter) const {
   if (failed(filter.checkAndNotify(rewriter, convOp)))
     return failure();
   if (convOp.hasBufferSemantics())
@@ -871,10 +873,28 @@ DownscaleSizeOneWindowed2DConvolution::returningMatchAndRewrite(
   auto kernelShape = kernelType.getShape();
   auto outputShape = outputType.getShape();
 
+  // Get domain indices based on conv2D layout.
+  int khIndex, kwIndex, ohIndex, owIndex;
+  if (std::is_same<Conv2DOpType, linalg::Conv2DNhwcHwcfOp>::value) {
+    khIndex = 0;
+    kwIndex = 1;
+    ohIndex = 1;
+    owIndex = 2;
+  } else if (std::is_same<Conv2DOpType, linalg::Conv2DNchwFchwOp>::value) {
+    khIndex = 2;
+    kwIndex = 3;
+    ohIndex = 2;
+    owIndex = 3;
+  } else {
+    return rewriter.notifyMatchFailure(
+        convOp, "Expected conv2D to be type linalg::Conv2DNchwFchwOp or "
+                "linalg::Conv2DNhwcHwcfOp, but got neither.");
+  }
+
   // Only handle the case where at least one of the window dimensions is
   // of size 1. Other cases can rely on tiling to reduce to such cases.
-  int64_t khSize = kernelShape[0], kwSize = kernelShape[1];
-  int64_t ohSize = outputShape[1], owSize = outputShape[2];
+  int64_t khSize = kernelShape[khIndex], kwSize = kernelShape[kwIndex];
+  int64_t ohSize = outputShape[ohIndex], owSize = outputShape[owIndex];
   bool removeH = (khSize == 1 && ohSize == 1);
   bool removeW = (kwSize == 1 && owSize == 1);
   if (!removeH && !removeW)
@@ -884,11 +904,11 @@ DownscaleSizeOneWindowed2DConvolution::returningMatchAndRewrite(
   // dimension.
   using RTTBuilder = RankedTensorType::Builder;
   RankedTensorType newInputType =
-      RTTBuilder(inputType).dropDim((removeH ? 1 : 2));
+      RTTBuilder(inputType).dropDim((removeH ? ohIndex : owIndex));
   RankedTensorType newKernelType =
-      RTTBuilder(kernelType).dropDim((removeH ? 0 : 1));
+      RTTBuilder(kernelType).dropDim((removeH ? khIndex : kwIndex));
   RankedTensorType newOutputType =
-      RTTBuilder(outputType).dropDim(removeH ? 1 : 2);
+      RTTBuilder(outputType).dropDim(removeH ? ohIndex : owIndex);
 
   // Rank-reduce operands.
   Location loc = convOp.getLoc();
@@ -901,16 +921,17 @@ DownscaleSizeOneWindowed2DConvolution::returningMatchAndRewrite(
 
   // Rank-reduce strides and dilations too.
   // TODO: dropDim 1-liner helper.
-  auto strides = llvm::to_vector<4>(convOp.getStrides().getValues<int64_t>());
+  auto strides =
+      llvm::to_vector<4>(convOp.getStrides().template getValues<int64_t>());
   strides.erase(strides.begin() + (removeH ? 0 : 1));
   auto stridesAttr = rewriter.getI64VectorAttr(strides);
 
   auto dilations =
-      llvm::to_vector<4>(convOp.getDilations().getValues<int64_t>());
+      llvm::to_vector<4>(convOp.getDilations().template getValues<int64_t>());
   dilations.erase(dilations.begin() + (removeH ? 0 : 1));
   auto dilationsAttr = rewriter.getI64VectorAttr(dilations);
 
-  auto conv1DOp = rewriter.create<linalg::Conv1DNwcWcfOp>(
+  auto conv1DOp = rewriter.create<Conv1DOpType>(
       loc, newOutputType, ValueRange{newInput, newKernel},
       ValueRange{newOutput}, stridesAttr, dilationsAttr);
 
@@ -997,7 +1018,10 @@ DownscaleDepthwiseConv2DNhwcHwcOp::returningMatchAndRewrite(
 void linalg::populateDecomposeConvolutionPatterns(
     RewritePatternSet &patterns, const LinalgTransformationFilter &filter,
     PatternBenefit benefit) {
-  patterns.add<DownscaleSizeOneWindowed2DConvolution,
+  patterns.add<DownscaleSizeOneWindowed2DConvolution<linalg::Conv2DNhwcHwcfOp,
+                                                     Conv1DNwcWcfOp>,
+               DownscaleSizeOneWindowed2DConvolution<linalg::Conv2DNchwFchwOp,
+                                                     Conv1DNcwFcwOp>,
                DownscaleDepthwiseConv2DNhwcHwcOp>(patterns.getContext(), filter,
                                                   benefit);
 }

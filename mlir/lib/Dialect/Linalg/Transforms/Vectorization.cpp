@@ -1378,15 +1378,37 @@ struct Conv1DNwcGenerator : public StructuredGenerator<LinalgOp> {
   /// kw is always unrolled.
   /// TODO: w (resp. kw) is unrolled when the strideW ( resp. dilationW) is
   /// > 1.
-  FailureOr<Operation *> conv() {
+  FailureOr<Operation *> conv(bool transposeForNcw = false) {
     if (!valid)
       return failure();
 
     int64_t nSize, wSize, cSize, kwSize, fSize;
-    // kernel{kw, c, f}
-    bindShapeDims(rhsShapedType, kwSize, cSize, fSize);
-    // out{n, w, f}
-    bindShapeDims(resShapedType, nSize, wSize);
+    if (transposeForNcw) {
+      // kernel{f, c, kw}
+      bindShapeDims(rhsShapedType, fSize, cSize, kwSize);
+      // out{n, f, w}
+      bindShapeDims(resShapedType, nSize, fSize, wSize);
+    } else {
+      // kernel{kw, c, f}
+      bindShapeDims(rhsShapedType, kwSize, cSize, fSize);
+      // out{n, w, f}
+      bindShapeDims(resShapedType, nSize, wSize);
+    }
+    SmallVector<int64_t, 3> lhsShape{
+        nSize,
+        // Compute minimal needed data based on the strideW, dilationW, kwSize.
+        // iw = ow * sw + kw *  dw - 1
+        //   (i.e. 16 convolved with 3 (@stride 1 dilation 1) -> 14)
+        // Perform the proper inclusive -> exclusive -> inclusive.
+        ((wSize - 1) * strideW + 1) + ((kwSize - 1) * dilationW + 1) - 1,
+        cSize};
+    SmallVector<int64_t, 3> rhsShape{kwSize, cSize, fSize};
+    SmallVector<int64_t, 3> resShape{nSize, wSize, fSize};
+    if (transposeForNcw) {
+      std::swap(lhsShape[1], lhsShape[2]);
+      std::swap(rhsShape[0], rhsShape[2]);
+      std::swap(resShape[1], resShape[2]);
+    }
 
     vector::TransferWriteOp write;
     Value zero = builder.create<arith::ConstantIndexOp>(loc, 0);
@@ -1399,16 +1421,9 @@ struct Conv1DNwcGenerator : public StructuredGenerator<LinalgOp> {
     Type lhsEltType = lhsShapedType.getElementType();
     Type rhsEltType = rhsShapedType.getElementType();
     Type resEltType = resShapedType.getElementType();
-    VectorType lhsType = VectorType::get(
-        {nSize,
-         // iw = ow * sw + kw *  dw - 1
-         //   (i.e. 16 convolved with 3 (@stride 1 dilation 1) -> 14)
-         // Perform the proper inclusive -> exclusive -> inclusive.
-         ((wSize - 1) * strideW + 1) + ((kwSize - 1) * dilationW + 1) - 1,
-         cSize},
-        lhsEltType);
-    VectorType rhsType = VectorType::get({kwSize, cSize, fSize}, rhsEltType);
-    VectorType resType = VectorType::get({nSize, wSize, fSize}, resEltType);
+    VectorType lhsType = VectorType::get(lhsShape, lhsEltType);
+    VectorType rhsType = VectorType::get(rhsShape, rhsEltType);
+    VectorType resType = VectorType::get(resShape, resEltType);
 
     // Read lhs slice of size {w * strideW + kw * dilationW, c, f} @ [0, 0,
     // 0].
@@ -1420,6 +1435,19 @@ struct Conv1DNwcGenerator : public StructuredGenerator<LinalgOp> {
     // Read res slice of size {n, w, f} @ [0, 0, 0].
     Value res = builder.create<vector::TransferReadOp>(
         loc, resType, resShaped, ValueRange{zero, zero, zero});
+
+    if (transposeForNcw) {
+      // Transpose for ncw case to work with the vectorization pass.
+      // ncw -> nwc
+      static constexpr std::array<int64_t, 3> perm_lhs = {0, 2, 1};
+      lhs = builder.create<vector::TransposeOp>(loc, lhs, perm_lhs);
+      // fcw -> wcf
+      static constexpr std::array<int64_t, 3> perm_rhs = {2, 1, 0};
+      rhs = builder.create<vector::TransposeOp>(loc, rhs, perm_rhs);
+      // nfw -> nwf
+      static constexpr std::array<int64_t, 3> perm_res = {0, 2, 1};
+      res = builder.create<vector::TransposeOp>(loc, res, perm_res);
+    }
 
     //===------------------------------------------------------------------===//
     // Begin vector-only rewrite part
@@ -1473,6 +1501,13 @@ struct Conv1DNwcGenerator : public StructuredGenerator<LinalgOp> {
     //===------------------------------------------------------------------===//
     // End vector-only rewrite part
     //===------------------------------------------------------------------===//
+
+    if (transposeForNcw) {
+      // Transpose nwc layout result to the ncw case.
+      // nwf -> nfw
+      static constexpr std::array<int64_t, 3> perm_res = {0, 2, 1};
+      res = builder.create<vector::TransposeOp>(loc, res, perm_res);
+    }
 
     // Write back res slice of size {n, w, f} @ [0, 0, 0].
     return builder
@@ -1620,6 +1655,10 @@ struct Conv1DNwcGenerator : public StructuredGenerator<LinalgOp> {
     if (!iters({Par(), Par(), Par(), Red(), Red()}))
       return failure();
 
+    if (layout({/*lhsIndex*/ {n, c, strideW * w + dilationW * kw},
+                /*rhsIndex*/ {f, c, kw},
+                /*resIndex*/ {n, f, w}}))
+      return conv(/*transposeForNcw*/ true);
     // No transposition needed.
     if (layout({/*lhsIndex*/ {n, strideW * w + dilationW * kw, c},
                 /*rhsIndex*/ {kw, c, f},
