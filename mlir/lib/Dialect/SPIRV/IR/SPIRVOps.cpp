@@ -974,6 +974,8 @@ static void buildLogicalUnaryOp(OpBuilder &builder, OperationState &state,
 static Type getElementPtrType(Type type, ValueRange indices, Location baseLoc) {
   auto ptrType = type.dyn_cast<spirv::PointerType>();
   if (!ptrType) {
+    llvm::outs() << "spv.AccessChain' op expected a pointer to composite type, "
+                    "but provided\n";
     emitError(baseLoc, "'spv.AccessChain' op expected a pointer "
                        "to composite type, but provided ")
         << type;
@@ -987,6 +989,8 @@ static Type getElementPtrType(Type type, ValueRange indices, Location baseLoc) {
   for (auto indexSSA : indices) {
     auto cType = resultType.dyn_cast<spirv::CompositeType>();
     if (!cType) {
+      llvm::outs()
+          << "spv.AccessChain' op cannot extract from non-composite type\n";
       emitError(baseLoc,
                 "'spv.AccessChain' op cannot extract from non-composite type ")
           << resultType << " with index " << index;
@@ -996,6 +1000,8 @@ static Type getElementPtrType(Type type, ValueRange indices, Location baseLoc) {
     if (resultType.isa<spirv::StructType>()) {
       Operation *op = indexSSA.getDefiningOp();
       if (!op) {
+        llvm::outs() << "spv.AccessChain' op index must be an integer "
+                        "spv.Constant to access element of spv.struct\n";
         emitError(baseLoc, "'spv.AccessChain' op index must be an "
                            "integer spv.Constant to access "
                            "element of spv.struct");
@@ -1005,6 +1011,9 @@ static Type getElementPtrType(Type type, ValueRange indices, Location baseLoc) {
       // TODO: this should be relaxed to allow
       // integer literals of other bitwidths.
       if (failed(extractValueFromConstOp(op, index))) {
+        llvm::outs()
+            << "spv.AccessChain' index must be an integer spv.Constant to "
+               "access element of spv.struct, but provided\n";
         emitError(baseLoc,
                   "'spv.AccessChain' index must be an integer spv.Constant to "
                   "access element of spv.struct, but provided ")
@@ -1012,6 +1021,7 @@ static Type getElementPtrType(Type type, ValueRange indices, Location baseLoc) {
         return nullptr;
       }
       if (index < 0 || static_cast<uint64_t>(index) >= cType.getNumElements()) {
+        llvm::outs() << "spv.AccessChain' op index out of bounds for\n";
         emitError(baseLoc, "'spv.AccessChain' op index ")
             << index << " out of bounds for " << resultType;
         return nullptr;
@@ -1025,7 +1035,10 @@ static Type getElementPtrType(Type type, ValueRange indices, Location baseLoc) {
 void spirv::AccessChainOp::build(OpBuilder &builder, OperationState &state,
                                  Value basePtr, ValueRange indices) {
   auto type = getElementPtrType(basePtr.getType(), indices, state.location);
-  assert(type && "Unable to deduce return type based on basePtr and indices");
+  if (type == nullptr)
+    llvm::outs() << "bad ptr:" << basePtr << "\n";
+  assert(type && "Unable to deduce return type based on basePtr and indices "
+                 "for good old AccessChain");
   build(builder, state, type, basePtr, indices);
 }
 
@@ -4508,7 +4521,8 @@ void spirv::PtrAccessChainOp::build(OpBuilder &builder, OperationState &state,
                                     Value basePtr, Value element,
                                     ValueRange indices) {
   auto type = getElementPtrType(basePtr.getType(), indices, state.location);
-  assert(type && "Unable to deduce return type based on basePtr and indices");
+  assert(type && "Unable to deduce return type based on basePtr and indices "
+                 "for PtrAccessChain");
   build(builder, state, type, basePtr, element, indices);
 }
 
