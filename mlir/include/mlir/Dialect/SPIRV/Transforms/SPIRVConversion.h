@@ -14,6 +14,7 @@
 #define MLIR_DIALECT_SPIRV_TRANSFORMS_SPIRVCONVERSION_H
 
 #include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVTypes.h"
 #include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -55,6 +56,10 @@ public:
     /// The number of bits to store a boolean value. It is eight bits by
     /// default.
     unsigned boolNumBits{8};
+
+    /// Has kernel capability a.k.a uses OpenCL flavored SPIRV rather than
+    /// GLSL/Vulkan.
+    bool hasKernelCapability{false};
 
     // Note: we need this instead of inline initializers because of
     // https://bugs.llvm.org/show_bug.cgi?id=36684
@@ -156,6 +161,10 @@ spirv::AccessChainOp getElementPtr(SPIRVTypeConverter &typeConverter,
                                    ValueRange indices, Location loc,
                                    OpBuilder &builder);
 
+spirv::PtrAccessChainOp getElementPtrDirect(SPIRVTypeConverter &typeConverter,
+                                            MemRefType baseType, Value basePtr,
+                                            ValueRange indices, Location loc,
+                                            OpBuilder &builder);
 } // namespace spirv
 } // namespace mlir
 
