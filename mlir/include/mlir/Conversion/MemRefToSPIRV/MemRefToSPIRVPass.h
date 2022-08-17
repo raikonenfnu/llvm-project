@@ -13,6 +13,7 @@
 #ifndef MLIR_CONVERSION_MEMREFTOSPIRV_MEMREFTOSPIRVPASS_H
 #define MLIR_CONVERSION_MEMREFTOSPIRV_MEMREFTOSPIRVPASS_H
 
+#include "mlir/Conversion/MemRefToSPIRV/MemRefToSPIRV.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVEnums.h"
 #include "mlir/Pass/Pass.h"
 
@@ -25,6 +26,10 @@ std::unique_ptr<OperationPass<>> createMapMemRefStorageClassPass();
 
 /// Creates a pass to convert MemRef ops to SPIR-V ops.
 std::unique_ptr<OperationPass<>> createConvertMemRefToSPIRVPass();
+
+/// Let user pass custom storage map.
+std::unique_ptr<OperationPass<>> createMapMemRefStorageClassPass(
+    spirv::MemorySpaceToStorageClassMap memorySpaceMap);
 
 } // namespace mlir
 
