@@ -937,7 +937,14 @@ void mlir::arith::populateArithmeticToSPIRVPatterns(
     spirv::ElementwiseOpPattern<arith::MaxUIOp, spirv::GLUMaxOp>,
     spirv::ElementwiseOpPattern<arith::MinFOp, spirv::GLFMinOp>,
     spirv::ElementwiseOpPattern<arith::MinSIOp, spirv::GLSMinOp>,
-    spirv::ElementwiseOpPattern<arith::MinUIOp, spirv::GLUMinOp>
+    spirv::ElementwiseOpPattern<arith::MinUIOp, spirv::GLUMinOp>,
+
+    spirv::ElementwiseOpPattern<arith::MaxFOp, spirv::CLFMaxOp>,
+    spirv::ElementwiseOpPattern<arith::MinFOp, spirv::CLFMinOp>,
+    spirv::ElementwiseOpPattern<arith::MaxSIOp, spirv::CLSMaxOp>,
+    spirv::ElementwiseOpPattern<arith::MaxUIOp, spirv::CLUMaxOp>,
+    spirv::ElementwiseOpPattern<arith::MinSIOp, spirv::CLSMinOp>,
+    spirv::ElementwiseOpPattern<arith::MinUIOp, spirv::CLUMinOp>
   >(typeConverter, patterns.getContext());
   // clang-format on
 
