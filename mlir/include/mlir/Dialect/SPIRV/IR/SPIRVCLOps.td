@@ -332,6 +332,37 @@ def SPV_CLFmaOp : SPV_CLTernaryArithmeticOp<"fma", 26, SPV_Float> {
 
 // -----
 
+def SPV_CLFMaxOp : SPV_CLBinaryArithmeticOp<"fmax", 27, SPV_Float> {
+  let summary = "Return maximum of two floating-point operands";
+
+  let description = [{
+    Returns y if x < y, otherwise it returns x. If one argument is a NaN,
+    Fmax returns the other argument. If both arguments are NaNs, Fmax returns a NaN.
+
+    Result Type, x and y must be floating-point or vector(2,3,4,8,16) 
+    of floating-point values.
+
+    All of the operands, including the Result Type operand, 
+    must be of the same type.
+
+    <!-- End of AutoGen section -->
+    ```
+    float-scalar-vector-type ::= float-type |
+                                 `vector<` integer-literal `x` float-type `>`
+    fmax-op ::= ssa-id `=` `spv.GL.FMax` ssa-use `:`
+                float-scalar-vector-type
+    ```
+    #### Example:
+
+    ```mlir
+    %2 = spv.CL.fmax %0, %1 : f32
+    %3 = spv.CL.fmax %0, %1 : vector<3xf16>
+    ```
+  }];
+}
+
+// -----
+
 def SPV_CLLogOp : SPV_CLUnaryArithmeticOp<"log", 37, SPV_Float> {
   let summary = "Compute the natural logarithm of x.";
 
