@@ -14,6 +14,7 @@
 #define MLIR_DIALECT_SPIRV_TRANSFORMS_SPIRVCONVERSION_H
 
 #include "mlir/Dialect/SPIRV/IR/SPIRVAttributes.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVTypes.h"
 #include "mlir/Dialect/SPIRV/IR/TargetAndABI.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -52,6 +53,8 @@ struct SPIRVConversionOptions {
   /// patterns would assume no NaN/infinity numbers as inputs, and thus there
   /// will be no special guards emitted to check and handle such cases.
   bool enableFastMathMode{false};
+
+  bool hasKernelCapability{false};
 };
 
 /// Type conversion from builtin types to SPIR-V types for shader interface.
@@ -156,6 +159,10 @@ spirv::AccessChainOp getElementPtr(SPIRVTypeConverter &typeConverter,
                                    ValueRange indices, Location loc,
                                    OpBuilder &builder);
 
+spirv::PtrAccessChainOp getElementPtrDirect(SPIRVTypeConverter &typeConverter,
+                                            MemRefType baseType, Value basePtr,
+                                            ValueRange indices, Location loc,
+                                            OpBuilder &builder);
 } // namespace spirv
 } // namespace mlir
 

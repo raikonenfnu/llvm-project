@@ -334,6 +334,10 @@ static Type convertBoolMemrefType(const spirv::TargetEnv &targetEnv,
     return nullptr;
   }
 
+  if (options.hasKernelCapability) {
+    return spirv::PointerType::get(arrayElemType, storageClass);
+  }
+
   if (!type.hasStaticShape()) {
     int64_t stride = needsExplicitLayout(storageClass) ? *arrayElemSize : 0;
     auto arrayType = spirv::RuntimeArrayType::get(arrayElemType, stride);
@@ -393,6 +397,10 @@ static Type convertMemrefType(const spirv::TargetEnv &targetEnv,
     return nullptr;
   }
 
+  if (options.hasKernelCapability) {
+    return spirv::PointerType::get(arrayElemType, storageClass);
+  }
+
   if (!type.hasStaticShape()) {
     int64_t stride = needsExplicitLayout(storageClass) ? *arrayElemSize : 0;
     auto arrayType = spirv::RuntimeArrayType::get(arrayElemType, stride);
@@ -416,6 +424,9 @@ static Type convertMemrefType(const spirv::TargetEnv &targetEnv,
 SPIRVTypeConverter::SPIRVTypeConverter(spirv::TargetEnvAttr targetAttr,
                                        const SPIRVConversionOptions &options)
     : targetEnv(targetAttr), options(options) {
+  // Checks if it is OpenCL flavored kernel.
+  this->options.hasKernelCapability =
+      this->targetEnv.allows(spirv::Capability::Kernel);
   // Add conversions. The order matters here: later ones will be tried earlier.
 
   // Allow all SPIR-V dialect specific types. This assumes all builtin types
@@ -740,6 +751,35 @@ spirv::AccessChainOp mlir::spirv::getElementPtr(
         linearizeIndex(indices, strides, offset, indexType, loc, builder));
   }
   return builder.create<spirv::AccessChainOp>(loc, basePtr, linearizedIndices);
+}
+
+spirv::PtrAccessChainOp mlir::spirv::getElementPtrDirect(
+    SPIRVTypeConverter &typeConverter, MemRefType baseType, Value basePtr,
+    ValueRange indices, Location loc, OpBuilder &builder) {
+  // Get base and offset of the MemRefType and verify they are static.
+
+  int64_t offset;
+  SmallVector<int64_t, 4> strides;
+  if (failed(getStridesAndOffset(baseType, strides, offset)) ||
+      llvm::is_contained(strides, MemRefType::getDynamicStrideOrOffset()) ||
+      offset == MemRefType::getDynamicStrideOrOffset()) {
+    return nullptr;
+  }
+
+  auto indexType = typeConverter.getIndexType();
+
+  SmallVector<Value, 2> linearizedIndices;
+  auto zero = spirv::ConstantOp::getZero(indexType, loc, builder);
+
+  Value linearIndex;
+  if (baseType.getRank() == 0) {
+    linearIndex = zero;
+  } else {
+    linearIndex =
+        linearizeIndex(indices, strides, offset, indexType, loc, builder);
+  }
+  return builder.create<spirv::PtrAccessChainOp>(loc, basePtr, linearIndex,
+                                                 linearizedIndices);
 }
 
 //===----------------------------------------------------------------------===//
