@@ -338,3 +338,8 @@ void MapMemRefStorageClassPass::runOnOperation() {
 std::unique_ptr<OperationPass<>> mlir::createMapMemRefStorageClassPass() {
   return std::make_unique<MapMemRefStorageClassPass>();
 }
+
+std::unique_ptr<OperationPass<>> mlir::createMapMemRefStorageClassPass(
+    spirv::MemorySpaceToStorageClassMap memorySpaceMap) {
+  return std::make_unique<MapMemRefStorageClassPass>(memorySpaceMap);
+}
