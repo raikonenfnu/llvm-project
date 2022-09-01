@@ -509,12 +509,25 @@ LoadOpPattern::matchAndRewrite(memref::LoadOp loadOp, OpAdaptor adaptor,
   return success();
 }
 
+int64_t numel(ArrayRef<int64_t> shape) {
+  int64_t numel =  1.0;
+  for (auto elem : shape) {
+    numel *= elem;
+  }
+  return numel;
+}
+
 LogicalResult
 LoadOpPtrPattern::matchAndRewrite(memref::LoadOp loadOp, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter) const {
   auto memrefType = loadOp.getMemref().getType().cast<MemRefType>();
   if (memrefType.getElementType().isSignlessInteger())
     return failure();
+  int64_t numelMemref = numel(memrefType.getShape());
+  if(numelMemref == 1) {
+    rewriter.replaceOpWithNewOp<spirv::LoadOp>(loadOp, adaptor.getMemref());
+    return success();
+  }
   auto loadPtr = spirv::getElementPtrDirect(
       *getTypeConverter<SPIRVTypeConverter>(), memrefType, adaptor.getMemref(),
       adaptor.getIndices(), loadOp.getLoc(), rewriter);
@@ -693,6 +706,11 @@ StoreOpPtrPattern::matchAndRewrite(memref::StoreOp storeOp, OpAdaptor adaptor,
   auto memrefType = storeOp.getMemref().getType().cast<MemRefType>();
   if (memrefType.getElementType().isSignlessInteger())
     return failure();
+  int64_t numelMemref = numel(memrefType.getShape());
+  if(numelMemref == 1) {
+    rewriter.replaceOpWithNewOp<spirv::StoreOp>(storeOp, adaptor.getMemref(), adaptor.getValue());
+    return success();
+  }
   auto storePtr = spirv::getElementPtrDirect(
       *getTypeConverter<SPIRVTypeConverter>(), memrefType, adaptor.getMemref(),
       adaptor.getIndices(), storeOp.getLoc(), rewriter);

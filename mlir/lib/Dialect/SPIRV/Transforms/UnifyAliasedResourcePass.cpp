@@ -209,6 +209,7 @@ ResourceAliasAnalysis::ResourceAliasAnalysis(Operation *root) {
 }
 
 bool ResourceAliasAnalysis::shouldUnify(Operation *op) const {
+  if(!op) return false;
   if (auto varOp = dyn_cast<spirv::GlobalVariableOp>(op)) {
     auto canonicalOp = getCanonicalResource(varOp);
     return canonicalOp && varOp != canonicalOp;
