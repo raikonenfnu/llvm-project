@@ -1317,9 +1317,9 @@ namespace {
 ///   Layout: {{n, strideW * w + dilationW * kw, c}, {kw, c}, {n, w, c}}
 /// ```
 /// kw is unrolled, w is unrolled iff dilationW > 1.
-struct Conv1DNwcGenerator : public StructuredGenerator<LinalgOp> {
-  Conv1DNwcGenerator(OpBuilder &builder, LinalgOp linalgOp, int strideW,
-                     int dilationW)
+struct Conv1DGenerator : public StructuredGenerator<LinalgOp> {
+  Conv1DGenerator(OpBuilder &builder, LinalgOp linalgOp, int strideW,
+                  int dilationW)
       : StructuredGenerator<LinalgOp>(builder, linalgOp), strideW(strideW),
         dilationW(dilationW) {
     // Determine whether `linalgOp` can be generated with this generator
@@ -1382,16 +1382,37 @@ struct Conv1DNwcGenerator : public StructuredGenerator<LinalgOp> {
   /// kw is always unrolled.
   /// TODO: w (resp. kw) is unrolled when the strideW ( resp. dilationW) is
   /// > 1.
-  FailureOr<Operation *> conv() {
+  FailureOr<Operation *> conv(bool transposeForNcw = false) {
     if (!valid)
       return failure();
 
     int64_t nSize, wSize, cSize, kwSize, fSize;
-    // kernel{kw, c, f}
-    bindShapeDims(rhsShapedType, kwSize, cSize, fSize);
-    // out{n, w, f}
-    bindShapeDims(resShapedType, nSize, wSize);
-
+    if (transposeForNcw) {
+      // kernel{f, c, kw}
+      bindShapeDims(rhsShapedType, fSize, cSize, kwSize);
+      // out{n, f, w}
+      bindShapeDims(resShapedType, nSize, fSize, wSize);
+    } else {
+      // kernel{kw, c, f}
+      bindShapeDims(rhsShapedType, kwSize, cSize, fSize);
+      // out{n, w, f}
+      bindShapeDims(resShapedType, nSize, wSize);
+    }
+    SmallVector<int64_t, 3> lhsShape{
+        nSize,
+        // Compute minimal needed data based on the strideW, dilationW, kwSize.
+        // iw = ow * sw + kw *  dw - 1
+        //   (i.e. 16 convolved with 3 (@stride 1 dilation 1) -> 14)
+        // Perform the proper inclusive -> exclusive -> inclusive.
+        ((wSize - 1) * strideW + 1) + ((kwSize - 1) * dilationW + 1) - 1,
+        cSize};
+    SmallVector<int64_t, 3> rhsShape{kwSize, cSize, fSize};
+    SmallVector<int64_t, 3> resShape{nSize, wSize, fSize};
+    if (transposeForNcw) {
+      std::swap(lhsShape[1], lhsShape[2]);
+      std::swap(rhsShape[0], rhsShape[2]);
+      std::swap(resShape[1], resShape[2]);
+    }
     vector::TransferWriteOp write;
     Value zero = builder.create<arith::ConstantIndexOp>(loc, 0);
 
@@ -1403,17 +1424,9 @@ struct Conv1DNwcGenerator : public StructuredGenerator<LinalgOp> {
     Type lhsEltType = lhsShapedType.getElementType();
     Type rhsEltType = rhsShapedType.getElementType();
     Type resEltType = resShapedType.getElementType();
-    VectorType lhsType = VectorType::get(
-        {nSize,
-         // iw = ow * sw + kw *  dw - 1
-         //   (i.e. 16 convolved with 3 (@stride 1 dilation 1) -> 14)
-         // Perform the proper inclusive -> exclusive -> inclusive.
-         ((wSize - 1) * strideW + 1) + ((kwSize - 1) * dilationW + 1) - 1,
-         cSize},
-        lhsEltType);
-    VectorType rhsType = VectorType::get({kwSize, cSize, fSize}, rhsEltType);
-    VectorType resType = VectorType::get({nSize, wSize, fSize}, resEltType);
-
+    VectorType lhsType = VectorType::get(lhsShape, lhsEltType);
+    VectorType rhsType = VectorType::get(rhsShape, rhsEltType);
+    VectorType resType = VectorType::get(resShape, resEltType);
     // Read lhs slice of size {w * strideW + kw * dilationW, c, f} @ [0, 0,
     // 0].
     Value lhs = builder.create<vector::TransferReadOp>(
@@ -1424,6 +1437,19 @@ struct Conv1DNwcGenerator : public StructuredGenerator<LinalgOp> {
     // Read res slice of size {n, w, f} @ [0, 0, 0].
     Value res = builder.create<vector::TransferReadOp>(
         loc, resType, resShaped, ValueRange{zero, zero, zero});
+
+    if (transposeForNcw) {
+      // Transpose for ncw case to work with the vectorization pass.
+      // ncw -> nwc
+      static constexpr std::array<int64_t, 3> perm_lhs = {0, 2, 1};
+      lhs = builder.create<vector::TransposeOp>(loc, lhs, perm_lhs);
+      // fcw -> wcf
+      static constexpr std::array<int64_t, 3> perm_rhs = {2, 1, 0};
+      rhs = builder.create<vector::TransposeOp>(loc, rhs, perm_rhs);
+      // nfw -> nwf
+      static constexpr std::array<int64_t, 3> perm_res = {0, 2, 1};
+      res = builder.create<vector::TransposeOp>(loc, res, perm_res);
+    }
 
     //===------------------------------------------------------------------===//
     // Begin vector-only rewrite part
@@ -1477,6 +1503,13 @@ struct Conv1DNwcGenerator : public StructuredGenerator<LinalgOp> {
     //===------------------------------------------------------------------===//
     // End vector-only rewrite part
     //===------------------------------------------------------------------===//
+
+    if (transposeForNcw) {
+      // Transpose nwc layout result to the ncw case.
+      // nwf -> nfw
+      static constexpr std::array<int64_t, 3> perm_res = {0, 2, 1};
+      res = builder.create<vector::TransposeOp>(loc, res, perm_res);
+    }
 
     // Write back res slice of size {n, w, f} @ [0, 0, 0].
     return builder
@@ -1618,7 +1651,7 @@ struct Conv1DNwcGenerator : public StructuredGenerator<LinalgOp> {
 
   /// Entry point that transposes into the common form:
   ///   {{n, strideW * w + dilationW * kw, c}, {kw, c, f}, {n, w, f}}
-  FailureOr<Operation *> generateConv() {
+  FailureOr<Operation *> generateNwcConv() {
     AffineExpr n, w, f, kw, c;
     bindDims(ctx, n, w, f, kw, c);
     if (!iters({Par(), Par(), Par(), Red(), Red()}))
@@ -1629,6 +1662,22 @@ struct Conv1DNwcGenerator : public StructuredGenerator<LinalgOp> {
                 /*rhsIndex*/ {kw, c, f},
                 /*resIndex*/ {n, w, f}}))
       return conv();
+    return failure();
+  }
+
+  /// Entry point that transposes into the common form:
+  ///   {{n, c, strideW * w + dilationW * kw}, {f, c, kw}, {n, f, w}}
+  FailureOr<Operation *> generateNcwConv() {
+    AffineExpr n, w, f, kw, c;
+    bindDims(ctx, n, f, w, c, kw);
+    if (!iters({Par(), Par(), Par(), Red(), Red()}))
+      return failure();
+
+    if (layout({/*lhsIndex*/ {n, c, strideW * w + dilationW * kw},
+                /*rhsIndex*/ {f, c, kw},
+                /*resIndex*/ {n, f, w}}))
+      return conv(/*transposeForNcw*/ true);
+
     return failure();
   }
 
@@ -1667,8 +1716,11 @@ static FailureOr<Operation *> vectorizeConvolution(OpBuilder &b, LinalgOp op) {
   auto dilations = op->getAttrOfType<DenseIntElementsAttr>("dilations");
   auto stride = strides ? *strides.getValues<uint64_t>().begin() : 1;
   auto dilation = dilations ? *dilations.getValues<uint64_t>().begin() : 1;
-  Conv1DNwcGenerator e(b, op, stride, dilation);
-  auto res = e.generateConv();
+  Conv1DGenerator e(b, op, stride, dilation);
+  auto res = e.generateNwcConv();
+  if (succeeded(res))
+    return res;
+  res = e.generateNcwConv();
   if (succeeded(res))
     return res;
   return e.generateDilatedConv();
