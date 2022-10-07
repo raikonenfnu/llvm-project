@@ -726,18 +726,9 @@ private:
 /// See `padding` for more details.
 struct LinalgPaddingPattern : public OpInterfaceRewritePattern<LinalgOp> {
   /// Construct a generic pattern applied to all LinalgOp that verify `filter`.
-  LinalgPaddingPattern(
-      MLIRContext *context,
-      LinalgPaddingOptions options = LinalgPaddingOptions(),
-      LinalgTransformationFilter f = LinalgTransformationFilter(),
-      PatternBenefit benefit = 1);
-
-  /// Construct a pattern specifically applied to `opName`.
-  LinalgPaddingPattern(
-      StringRef opName, MLIRContext *context,
-      LinalgPaddingOptions options = LinalgPaddingOptions(),
-      LinalgTransformationFilter f = LinalgTransformationFilter(),
-      PatternBenefit benefit = 1);
+  LinalgPaddingPattern(MLIRContext *context,
+                       LinalgPaddingOptions options = LinalgPaddingOptions(),
+                       PatternBenefit benefit = 1);
 
   /// `matchAndRewrite` implementation that returns the significant transformed
   /// pieces of IR.
@@ -750,8 +741,6 @@ struct LinalgPaddingPattern : public OpInterfaceRewritePattern<LinalgOp> {
   }
 
 private:
-  /// LinalgTransformMarker handles special attribute manipulations.
-  LinalgTransformationFilter filter;
   /// Options to control padding and hoisting.
   LinalgPaddingOptions options;
 };
