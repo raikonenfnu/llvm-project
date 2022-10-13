@@ -143,15 +143,23 @@ template <typename SourceOp, spirv::BuiltIn builtin>
 LogicalResult LaunchConfigConversion<SourceOp, builtin>::matchAndRewrite(
     SourceOp op, typename SourceOp::Adaptor adaptor,
     ConversionPatternRewriter &rewriter) const {
-  auto *typeConverter = this->template getTypeConverter<SPIRVTypeConverter>();
-  auto indexType = typeConverter->getIndexType();
+  auto i32Type = rewriter.getIntegerType(32);
 
   // SPIR-V invocation builtin variables are a vector of type <3xi32>
   auto spirvBuiltin =
-      spirv::getBuiltinVariableValue(op, builtin, indexType, rewriter);
-  rewriter.replaceOpWithNewOp<spirv::CompositeExtractOp>(
-      op, indexType, spirvBuiltin,
+      spirv::getBuiltinVariableValue(op, builtin, i32Type, rewriter);
+  Value spirvId = rewriter.create<spirv::CompositeExtractOp>(
+      spirvBuiltin.getLoc(), i32Type, spirvBuiltin,
       rewriter.getI32ArrayAttr({static_cast<int32_t>(op.getDimension())}));
+
+  // Casting if Indexing type not i32.
+  auto *typeConverter = this->template getTypeConverter<SPIRVTypeConverter>();
+  auto indexType = typeConverter->getIndexType();
+  if(indexType != i32Type) {
+    spirvId = rewriter.create<spirv::UConvertOp>(
+        spirvId.getLoc(), indexType, spirvId);
+  }
+  rewriter.replaceOp(op, spirvId);
   return success();
 }
 
