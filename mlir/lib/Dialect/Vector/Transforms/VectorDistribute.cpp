@@ -1084,9 +1084,40 @@ struct WarpOpReduction : public OpRewritePattern<WarpExecuteOnLane0Op> {
 
     Value laneValVec = newWarpOp.getResult(newRetIndices[0]);
     // First reduce on a single thread.
-    Value perLaneReduction = rewriter.create<vector::ReductionOp>(
+    Value perLaneReduction;
+    const unsigned kShuffleBitWidth = 32;
+    Type vecElType = vectorType.getElementType();
+    unsigned bitWidth = vecElType.getIntOrFloatBitWidth();
+    if(bitWidth == kShuffleBitWidth) {
+      perLaneReduction = rewriter.create<vector::ReductionOp>(
         reductionOp.getLoc(), reductionOp.getKind(), laneValVec);
-    // Then distribute across threads.
+    } else {
+      // Unroll reductions s.t we can pack into a supported bitWidth format.
+      int64_t laneValVecSize = laneValVec.getType().cast<VectorType>().getShape()[0];
+      assert(kShuffleBitWidth % bitWidth == 0 && "Bitwidth needs to be able to be packed into shuffle-bitwidth.");
+      int64_t unrollCount = kShuffleBitWidth / bitWidth;
+      // Original size needs to be divisble by or less than unroll count to determine slice size.
+      assert(laneValVecSize % unrollCount == 0 || laneValVecSize < unrollCount);
+      // if(laneValVecSize < unrollCount) {
+      //   VectorType unrolledLaneValType = VectorType::get({unrollCount}, vecElType);
+      //   perLaneReduction = rewriter.create<arith::ConstantOp>(reductionOp.getLoc(), rewriter.getZeroAttr(unrolledLaneValType));
+      //   perLaneReduction = rewriter.create<vector::InsertOp>(reductionOp.getLoc(), laneValVec, perLaneReduction, perLaneUnrollId);
+      // }
+      unsigned sliceSize = laneValVecSize / unrollCount;
+      VectorType unrolledLaneValType = VectorType::get({unrollCount}, vecElType);
+      perLaneReduction = rewriter.create<arith::ConstantOp>(reductionOp.getLoc(), rewriter.getZeroAttr(unrolledLaneValType));
+      for (int64_t i = 0; i < unrollCount; i++) {
+        Value laneValSlice = rewriter.create<vector::ExtractStridedSliceOp>(
+                    reductionOp.getLoc(), laneValVec,
+                    /*offsets=*/ArrayRef<int64_t>{sliceSize * i},
+                    /*sizes=*/ArrayRef<int64_t>{sliceSize},
+                    /*strides=*/ArrayRef<int64_t>{1});
+        Value reductionSlice = rewriter.create<vector::ReductionOp>(
+          reductionOp.getLoc(), reductionOp.getKind(), laneValSlice);
+        SmallVector<int64_t> perLaneUnrollId = {i};
+        perLaneReduction = rewriter.create<vector::InsertOp>(reductionOp.getLoc(), reductionSlice, perLaneReduction, perLaneUnrollId);
+      }
+    }
     Value fullReduce =
         distributedReductionFn(reductionOp.getLoc(), rewriter, perLaneReduction,
                                reductionOp.getKind(), newWarpOp.getWarpSize());
