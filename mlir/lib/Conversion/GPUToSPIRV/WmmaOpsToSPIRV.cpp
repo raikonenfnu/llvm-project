@@ -88,8 +88,12 @@ struct WmmaLoadOpToSPIRVLowering
     auto i32Type = rewriter.getI32Type();
     auto strideValue = rewriter.create<spirv::ConstantOp>(
         loc, i32Type, IntegerAttr::get(i32Type, stride));
+    bool useColMajor = false;
+    if (auto transposeLoad = subgroupMmaLoadMatrixOp.getTranspose()) {
+      useColMajor = transposeLoad.value();
+    }
     auto coloumnMajor = rewriter.create<spirv::ConstantOp>(
-        loc, rewriter.getI1Type(), rewriter.getBoolAttr(false));
+        loc, rewriter.getI1Type(), rewriter.getBoolAttr(useColMajor));
     rewriter.replaceOpWithNewOp<spirv::NVCooperativeMatrixLoadOp>(
         subgroupMmaLoadMatrixOp, coopType, bufferPtr, strideValue, coloumnMajor,
         spirv::MemoryAccessAttr());

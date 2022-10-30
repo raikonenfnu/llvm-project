@@ -127,11 +127,13 @@ static bool transferReadSupportsMMAMatrixType(vector::TransferReadOp readOp,
   AffineExpr zero = b.getAffineConstantExpr(0);
   auto broadcastInnerDim = AffineMap::get(map.getNumDims(), 0, {zero, innerDim},
                                           readOp.getContext());
+  bool isTranspose = !map.isIdentity() && map.getNumDims() == 2;
 
   if (!useNvGpu) {
     // TODO: Support transpose once it is added to GPU dialect ops.
-    // For now we only support (d0, d1) -> (d0, d1) and (d0, d1) -> (0, d1).
-    return map.isMinorIdentity() || map == broadcastInnerDim;
+    // For now we only support (d0, d1) ->  (d0, d1) and (d0, d1) -> (0, d1).
+    bool result = map.isMinorIdentity() || map == broadcastInnerDim || isTranspose;
+    return result;
   }
 
   return true;
@@ -413,9 +415,10 @@ static void convertTransferReadOp(vector::TransferReadOp op,
       gpu::MMAMatrixType::get(op.getVectorType().getShape(),
                               op.getVectorType().getElementType(), fragType);
   OpBuilder b(op);
+  bool isTranspose = !map.isIdentity() && map.getNumDims() == 2;
   Value load = b.create<gpu::SubgroupMmaLoadMatrixOp>(
       op.getLoc(), type, op.getSource(), op.getIndices(),
-      b.getIndexAttr(*stride));
+      b.getIndexAttr(*stride), b.getBoolAttr(isTranspose));
   valueMapping[op.getResult()] = load;
 }
 
