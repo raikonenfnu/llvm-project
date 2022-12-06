@@ -149,6 +149,29 @@ static bool areSameBitwidthScalarType(Type a, Type b) {
          a.getIntOrFloatBitWidth() == b.getIntOrFloatBitWidth();
 }
 
+static SmallVector<Value> packComponentsToType(ConversionPatternRewriter &rewriter, Location loc, SmallVector<Value> &components, Type targetType) {
+  Type elementVectorType;
+  SmallVector<Value> newComponents;
+  auto targetVecType = targetType.dyn_cast<VectorType>();
+  if (!targetVecType) return {};
+  auto targetElType = targetVecType.getElementType();
+  auto packedBitWidth = targetElType.getIntOrFloatBitWidth();
+  for (auto & component : components) {
+    VectorType vecType = component.getType().dyn_cast<VectorType>();
+    if (!vecType) return {};
+    if (vecType.getRank() != 1) return {};
+    if (!elementVectorType) elementVectorType = vecType.getElementType();
+    if (vecType.getElementType() != elementVectorType) return {};
+    int64_t vecBitWidth = elementVectorType.getIntOrFloatBitWidth();
+    int64_t packedNumel = vecType.getShape()[0] * vecBitWidth / packedBitWidth;
+    Type packedType = VectorType::get({packedNumel}, targetElType);;
+    Value newComponent =
+      rewriter.create<spirv::BitcastOp>(loc, packedType, component);
+    newComponents.push_back(newComponent);
+  }
+  return newComponents;
+}
+
 //===----------------------------------------------------------------------===//
 // Analysis
 //===----------------------------------------------------------------------===//
@@ -484,8 +507,13 @@ struct ConvertLoad : public ConvertAliasResource<spirv::LoadOp> {
       // of the vector map to lower-ordered bits of the larger bitwidth element
       // type.
       Type vectorType = srcElemType;
-      if (!srcElemType.isa<VectorType>())
+      if (!srcElemType.isa<VectorType>()) {
         vectorType = VectorType::get({ratio}, dstElemType);
+      }
+      else if (srcElemType.isa<VectorType>() && srcElemType != dstElemType) {
+        // vectorType = getCombinedVectorTypes(rewriter, loc, components);
+        components = packComponentsToType(rewriter, loc, components, vectorType);
+      }
       Value vectorValue = rewriter.create<spirv::CompositeConstructOp>(
           loc, vectorType, components);
       if (!srcElemType.isa<VectorType>())
