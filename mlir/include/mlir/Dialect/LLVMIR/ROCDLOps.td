@@ -122,6 +122,41 @@ Arguments<(ins I32:$src,
    }];
 }
 
+def ROCDL_MovDppOp : 
+ROCDL_Op<"mov_dpp">,
+Results<(outs I32:$res)>,
+Arguments<(ins I32:$src,
+               I32:$dpp_ctrl,
+               I32:$row_mask,
+               I32:$bank_mask,
+               I1:$bound_ctrl)>
+{
+  string llvmBuilder = [{
+    $res = createIntrinsicCall(builder, llvm::Intrinsic::amdgcn_mov_dpp, {$src, $dpp_ctrl, $row_mask, $bank_mask, $bound_ctrl},  {$_resultType});
+  }];
+  let assemblyFormat = [{
+    $src `,` $dpp_ctrl `,` $row_mask `,` $bank_mask `,` $bound_ctrl  attr-dict `:` `(` type($src) `,` type($dpp_ctrl) `,` type($row_mask) `,` type($bank_mask) `,` type($bound_ctrl) `)` `->` type($res)
+   }];
+}
+
+def ROCDL_UpdateDppOp : 
+ROCDL_Op<"update_dpp">,
+Results<(outs I32:$res)>,
+Arguments<(ins I32:$old,
+               I32:$src,
+               I32:$dpp_ctrl,
+               I32:$row_mask,
+               I32:$bank_mask,
+               I1:$bound_ctrl)>
+{
+  string llvmBuilder = [{
+    $res = createIntrinsicCall(builder, llvm::Intrinsic::amdgcn_update_dpp, {$old, $src, $dpp_ctrl, $row_mask, $bank_mask, $bound_ctrl},  {$_resultType});
+  }];
+  let assemblyFormat = [{
+    $old  `,` $src `,` $dpp_ctrl `,` $row_mask `,` $bank_mask `,` $bound_ctrl  attr-dict `:` `(` type($old) `,` type($src) `,` type($dpp_ctrl) `,` type($row_mask) `,` type($bank_mask) `,` type($bound_ctrl) `)` `->` type($res)
+   }];
+}
+
 def ROCDL_DsBpermuteOp : 
 ROCDL_Op<"ds_bpermute">,
 Results<(outs I32:$res)>,

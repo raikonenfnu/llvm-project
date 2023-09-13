@@ -110,6 +110,95 @@ struct GPULaneIdOpToROCDL : ConvertOpToLLVMPattern<gpu::LaneIdOp> {
   }
 };
 
+/// Returns true if the given `gpu.shuffle` has a shuffle mode, offset and
+/// width, that is representable by DPP intrinsics.
+static bool hasFastShuffleLowering(gpu::ShuffleOp op, Value offset,
+                                   Value width) {
+  auto widthOp = dyn_cast_or_null<LLVM::ConstantOp>(width.getDefiningOp());
+  auto offsetOp = dyn_cast_or_null<LLVM::ConstantOp>(offset.getDefiningOp());
+  // Requires width and offset to be known at compile time.
+  if (!widthOp || !offsetOp)
+    return false;
+  auto widthIntAttr = dyn_cast<IntegerAttr>(widthOp.getValue());
+  auto offsetIntAttr = dyn_cast<IntegerAttr>(offsetOp.getValue());
+  // Requires offset and width to be i32.
+  if (!offsetIntAttr || !widthIntAttr)
+    return false;
+  int32_t offsetInt32 = offsetIntAttr.getInt();
+  int32_t widthInt32 = widthIntAttr.getInt();
+  // Width needs to be same size as warp.
+  const int32_t kWarpSize = 32;
+  if (widthInt32 != kWarpSize)
+    return false;
+  bool modeCanBeDppRepresented = false;
+  // TODO: Add support for xor > 15 using permlanex.
+  // TODO: Add fast/constant lowering support for other shuffle modes.
+  switch (op.getMode()) {
+  case gpu::ShuffleMode::XOR:
+    // Max xor offset representable by dpp_ctrl is 15.
+    modeCanBeDppRepresented = offsetInt32 <= 15;
+    break;
+  default:
+    modeCanBeDppRepresented = false;
+  }
+  return modeCanBeDppRepresented;
+}
+
+struct FastStaticGPUShuffleLowering
+    : public ConvertOpToLLVMPattern<gpu::ShuffleOp> {
+  using ConvertOpToLLVMPattern<gpu::ShuffleOp>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(gpu::ShuffleOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op->getLoc();
+    // TODO: Add support for non 32-bit shuffle values.
+    if (adaptor.getValue().getType().getIntOrFloatBitWidth() != 32)
+      return failure();
+    Value offset = adaptor.getOffset();
+    Value width = adaptor.getWidth();
+    if (!hasFastShuffleLowering(op, offset, width))
+      return failure();
+    const unsigned indexBitwidth = getTypeConverter()->getIndexTypeBitwidth();
+    auto int32Type = IntegerType::get(rewriter.getContext(), 32);
+    auto boolType = IntegerType::get(rewriter.getContext(), 1);
+    auto offsetOp = dyn_cast<LLVM::ConstantOp>(offset.getDefiningOp());
+    int32_t offsetInt32 = dyn_cast<IntegerAttr>(offsetOp.getValue()).getInt();
+    Value initShflValue = adaptor.getValue();
+    if (adaptor.getValue().getType().isF32()) {
+      initShflValue =
+          rewriter.create<LLVM::BitcastOp>(loc, int32Type, initShflValue);
+    }
+    int32_t dppCtrlMask = 0;
+    // TODO: Add fast/constant lowering support for other shuffle modes.
+    switch (op.getMode()) {
+    case gpu::ShuffleMode::XOR: {
+      int32_t xorBaseMask = 352;
+      dppCtrlMask = xorBaseMask | offsetInt32;
+      break;
+    }
+    default: {
+      return failure();
+    }
+    }
+    Value dppCtrl =
+        rewriter.create<LLVM::ConstantOp>(loc, int32Type, dppCtrlMask);
+    Value rowMask = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 15);
+    Value bankMask = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 15);
+    Value boundCtrl = rewriter.create<LLVM::ConstantOp>(loc, boolType, true);
+    Value shflValue = rewriter.create<ROCDL::MovDppOp>(
+        loc, int32Type, initShflValue, dppCtrl, rowMask, bankMask, boundCtrl);
+    if (adaptor.getValue().getType().isF32()) {
+      shflValue = rewriter.create<LLVM::BitcastOp>(
+          loc, adaptor.getValue().getType(), shflValue);
+    }
+    Value isActiveSrcLane =
+        rewriter.create<LLVM::ConstantOp>(loc, boolType, true);
+    rewriter.replaceOp(op, {shflValue, isActiveSrcLane});
+    return success();
+  }
+};
+
 struct GPUShuffleOpLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp> {
   using ConvertOpToLLVMPattern<gpu::ShuffleOp>::ConvertOpToLLVMPattern;
 
@@ -136,11 +225,14 @@ struct GPUShuffleOpLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp> {
     // TODO: Add support for non 32-bit shuffle values.
     if (adaptor.getValue().getType().getIntOrFloatBitWidth() != 32)
       return failure();
+    Value offset = adaptor.getOffset();
+    Value width = adaptor.getWidth();
+    if (hasFastShuffleLowering(op, offset, width))
+      return failure();
     const unsigned indexBitwidth = getTypeConverter()->getIndexTypeBitwidth();
     Value srcLaneId = getLaneId(rewriter, loc, indexBitwidth);
 
     auto int32Type = IntegerType::get(rewriter.getContext(), 32);
-    Value width = adaptor.getWidth();
     Value zero = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 0);
     Value negwidth = rewriter.create<LLVM::SubOp>(loc, int32Type, zero, width);
     Value add = rewriter.create<LLVM::AddOp>(loc, int32Type, srcLaneId, width);
@@ -152,11 +244,10 @@ struct GPUShuffleOpLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp> {
     // perf.
     switch (op.getMode()) {
     case gpu::ShuffleMode::XOR:
-      dstLane = rewriter.create<LLVM::XOrOp>(loc, int32Type, srcLaneId,
-                                             adaptor.getOffset());
+      dstLane = rewriter.create<LLVM::XOrOp>(loc, int32Type, srcLaneId, offset);
       break;
     case gpu::ShuffleMode::IDX:
-      dstLane = adaptor.getOffset();
+      dstLane = offset;
       break;
     default:
       return failure();
@@ -364,7 +455,8 @@ void mlir::populateGpuToROCDLConversionPatterns(
     patterns.add<GPUPrintfOpToLLVMCallLowering>(converter, /*addressSpace=*/4);
   }
 
-  patterns.add<GPUShuffleOpLowering, GPULaneIdOpToROCDL>(converter);
+  patterns.add<FastStaticGPUShuffleLowering, GPUShuffleOpLowering,
+               GPULaneIdOpToROCDL>(converter);
 
   populateOpPatterns<math::AbsFOp>(converter, patterns, "__ocml_fabs_f32",
                                    "__ocml_fabs_f64");
