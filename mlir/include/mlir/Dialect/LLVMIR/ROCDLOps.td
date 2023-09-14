@@ -130,7 +130,76 @@ Arguments<(ins I32:$src,
    }];
 }
 
-def ROCDL_DsBpermuteOp :
+def ROCDL_MovDppOp : 
+ROCDL_Op<"mov_dpp">,
+Results<(outs I32:$res)>,
+Arguments<(ins I32:$src,
+               I32:$dpp_ctrl,
+               I32:$row_mask,
+               I32:$bank_mask,
+               I1:$bound_ctrl)>
+{
+  string llvmBuilder = [{
+    $res = createIntrinsicCall(builder, llvm::Intrinsic::amdgcn_mov_dpp, {$src, $dpp_ctrl, $row_mask, $bank_mask, $bound_ctrl},  {$_resultType});
+  }];
+  let assemblyFormat = [{
+    $src `,` $dpp_ctrl `,` $row_mask `,` $bank_mask `,` $bound_ctrl  attr-dict `:` `(` type($src) `,` type($dpp_ctrl) `,` type($row_mask) `,` type($bank_mask) `,` type($bound_ctrl) `)` `->` type($res)
+   }];
+}
+
+def ROCDL_UpdateDppOp : 
+ROCDL_Op<"update_dpp">,
+Results<(outs I32:$res)>,
+Arguments<(ins I32:$old,
+               I32:$src,
+               I32:$dpp_ctrl,
+               I32:$row_mask,
+               I32:$bank_mask,
+               I1:$bound_ctrl)>
+{
+  string llvmBuilder = [{
+    $res = createIntrinsicCall(builder, llvm::Intrinsic::amdgcn_update_dpp, {$old, $src, $dpp_ctrl, $row_mask, $bank_mask, $bound_ctrl},  {$_resultType});
+  }];
+  let assemblyFormat = [{
+    $old  `,` $src `,` $dpp_ctrl `,` $row_mask `,` $bank_mask `,` $bound_ctrl  attr-dict `:` `(` type($old) `,` type($src) `,` type($dpp_ctrl) `,` type($row_mask) `,` type($bank_mask) `,` type($bound_ctrl) `)` `->` type($res)
+   }];
+}
+
+def ROCDL_Permlane16 : 
+ROCDL_Op<"permlane16">,
+Results<(outs I32:$res)>,
+Arguments<(ins I32:$src0,
+               I32:$src1,
+               I32:$src2,
+               I1:$fi,
+               I1:$bound_ctrl)>
+{
+  string llvmBuilder = [{
+    $res = createIntrinsicCall(builder, llvm::Intrinsic::amdgcn_permlane16, {$src0, $src1, $src2, $fi, $bound_ctrl},  {$_resultType});
+  }];
+  let assemblyFormat = [{
+    $src0 `,` $src1 `,` $src2 `,` $fi `,` $bound_ctrl  attr-dict `:` `(` type($src0) `,` type($src1) `,` type($src2) `,` type($fi) `,` type($bound_ctrl) `)` `->` type($res)
+   }];
+}
+
+def ROCDL_PermlaneX16 : 
+ROCDL_Op<"permlaneX16">,
+Results<(outs I32:$res)>,
+Arguments<(ins I32:$src0,
+               I32:$src1,
+               I32:$src2,
+               I1:$fi,
+               I1:$bound_ctrl)>
+{
+  string llvmBuilder = [{
+    $res = createIntrinsicCall(builder, llvm::Intrinsic::amdgcn_permlanex16, {$src0, $src1, $src2, $fi, $bound_ctrl},  {$_resultType});
+  }];
+  let assemblyFormat = [{
+    $src0 `,` $src1 `,` $src2 `,` $fi `,` $bound_ctrl  attr-dict `:` `(` type($src0) `,` type($src1) `,` type($src2) `,` type($fi) `,` type($bound_ctrl) `)` `->` type($res)
+   }];
+}
+
+def ROCDL_DsBpermuteOp : 
 ROCDL_Op<"ds_bpermute">,
 Results<(outs I32:$res)>,
 Arguments<(ins I32:$index,
