@@ -278,6 +278,12 @@ struct GPUShuffleOpLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp> {
     bool canOptimize = false;
     DppCtrl dppCtrl = DppCtrl::DppQuadPerm0000;
 
+    Value initShflValue = adaptor.getValue();
+    if (adaptor.getValue().getType().isF32()) {
+      initShflValue =
+          rewriter.create<LLVM::BitcastOp>(loc, int32Type, initShflValue);
+    }
+
     // Use dpp_mov if mask < 16
     // Use permlanex16 if support or ds_swizzle, if 16 <= mask < 32
     // Use ds_bpermute to handle more complex cases
@@ -360,7 +366,7 @@ struct GPUShuffleOpLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp> {
               rewriter.create<LLVM::ConstantOp>(loc, boolType, true);
           // TODO: Add a builder that directly takes int32_t.
           Value shflValue = rewriter.create<ROCDL::MovDppOp>(
-              loc, int32Type, adaptor.getValue(), dppCtrlVal, rowMask, bankMask,
+              loc, int32Type, initShflValue, dppCtrlVal, rowMask, bankMask,
               boundCtrl);
           if (adaptor.getValue().getType().isF32()) {
             shflValue = rewriter.create<LLVM::BitcastOp>(
@@ -388,6 +394,7 @@ struct GPUShuffleOpLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp> {
           unsigned laneSelS1 = laneSelBits[mask - 16][0];
           unsigned laneSelS2 = laneSelBits[mask - 16][1];
 
+          Value old = rewriter.create<LLVM::UndefOp>(loc, int32Type);
           Value laneSelS1Value =
               rewriter.create<LLVM::ConstantOp>(loc, int32Type, laneSelS1);
           Value laneSelS2Value =
@@ -395,8 +402,8 @@ struct GPUShuffleOpLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp> {
           Value fi = rewriter.create<LLVM::ConstantOp>(loc, boolType, false);
           Value boundCtrl =
               rewriter.create<LLVM::ConstantOp>(loc, boolType, false);
-          Value shflValue = rewriter.create<ROCDL::PermlaneX16>(
-              loc, int32Type, adaptor.getValue(), laneSelS1Value,
+          Value shflValue = rewriter.create<ROCDL::PermlaneX16Op>(
+              loc, int32Type, old, initShflValue, laneSelS1Value,
               laneSelS2Value, fi, boundCtrl);
           if (adaptor.getValue().getType().isF32()) {
             shflValue = rewriter.create<LLVM::BitcastOp>(

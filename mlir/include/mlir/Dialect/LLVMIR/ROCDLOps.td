@@ -165,37 +165,39 @@ Arguments<(ins I32:$old,
    }];
 }
 
-def ROCDL_Permlane16 : 
+def ROCDL_Permlane16Op : 
 ROCDL_Op<"permlane16">,
 Results<(outs I32:$res)>,
-Arguments<(ins I32:$src0,
+Arguments<(ins I32:$old,
+               I32:$src0,
                I32:$src1,
                I32:$src2,
                I1:$fi,
                I1:$bound_ctrl)>
 {
   string llvmBuilder = [{
-    $res = createIntrinsicCall(builder, llvm::Intrinsic::amdgcn_permlane16, {$src0, $src1, $src2, $fi, $bound_ctrl},  {$_resultType});
+    $res = createIntrinsicCall(builder, llvm::Intrinsic::amdgcn_permlane16, {$old, $src0, $src1, $src2, $fi, $bound_ctrl},  {$_resultType});
   }];
   let assemblyFormat = [{
-    $src0 `,` $src1 `,` $src2 `,` $fi `,` $bound_ctrl  attr-dict `:` `(` type($src0) `,` type($src1) `,` type($src2) `,` type($fi) `,` type($bound_ctrl) `)` `->` type($res)
+    $old `,` $src0 `,` $src1 `,` $src2 `,` $fi `,` $bound_ctrl  attr-dict `:` `(` type($old) `,` type($src0) `,` type($src1) `,` type($src2) `,` type($fi) `,` type($bound_ctrl) `)` `->` type($res)
    }];
 }
 
-def ROCDL_PermlaneX16 : 
+def ROCDL_PermlaneX16Op : 
 ROCDL_Op<"permlaneX16">,
 Results<(outs I32:$res)>,
-Arguments<(ins I32:$src0,
+Arguments<(ins I32:$old,
+               I32:$src0,
                I32:$src1,
                I32:$src2,
                I1:$fi,
                I1:$bound_ctrl)>
 {
   string llvmBuilder = [{
-    $res = createIntrinsicCall(builder, llvm::Intrinsic::amdgcn_permlanex16, {$src0, $src1, $src2, $fi, $bound_ctrl},  {$_resultType});
+    $res = createIntrinsicCall(builder, llvm::Intrinsic::amdgcn_permlanex16, {$old, $src0, $src1, $src2, $fi, $bound_ctrl});
   }];
   let assemblyFormat = [{
-    $src0 `,` $src1 `,` $src2 `,` $fi `,` $bound_ctrl  attr-dict `:` `(` type($src0) `,` type($src1) `,` type($src2) `,` type($fi) `,` type($bound_ctrl) `)` `->` type($res)
+    $old `,` $src0 `,` $src1 `,` $src2 `,` $fi `,` $bound_ctrl  attr-dict `:` `(` type($old) `,` type($src0) `,` type($src1) `,` type($src2) `,` type($fi) `,` type($bound_ctrl) `)` `->` type($res)
    }];
 }
 
