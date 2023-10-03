@@ -438,9 +438,20 @@ static VectorType getDistributedType(VectorType originalType, AffineMap map,
                                    originalType.getShape().end());
   for (unsigned i = 0, e = map.getNumResults(); i < e; i++) {
     unsigned position = map.getDimPosition(i);
-    if (targetShape[position] % warpSize != 0)
-      return VectorType();
-    targetShape[position] = targetShape[position] / warpSize;
+    // If vectorSize is greater than warpSize, we can try to
+    // distribute along slower dimensions and tile to 1.
+    int dimSize = 1;
+    bool canDistribute = false;
+    for (int i = position; i >= 0; i--) {
+      dimSize *= targetShape[i];
+      targetShape[i] = 1;
+      // Skip to next dim if dimSize is not tilable.
+      if (dimSize % warpSize != 0) continue;
+      canDistribute = true;
+      break;
+    }
+    if (!canDistribute) return VectorType();
+    targetShape[position] = dimSize / warpSize;
   }
   VectorType targetType =
       VectorType::get(targetShape, originalType.getElementType());
