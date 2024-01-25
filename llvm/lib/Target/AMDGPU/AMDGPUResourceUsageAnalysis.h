@@ -73,7 +73,9 @@ public:
 
 private:
   SIFunctionResourceInfo analyzeResourceUsage(const MachineFunction &MF,
-                                              const TargetMachine &TM) const;
+                                              const TargetMachine &TM,
+    uint32_t AssumedStackSizeForDynamicSizeObjects,
+    uint32_t AssumedStackSizeForExternalCall) const;
   void propagateIndirectCallRegisterUsage();
 
   DenseMap<const Function *, SIFunctionResourceInfo> CallGraphResourceInfo;
