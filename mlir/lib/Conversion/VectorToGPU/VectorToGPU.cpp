@@ -161,8 +161,13 @@ static bool transferReadSupportsMMAMatrixType(vector::TransferReadOp readOp) {
   AffineExpr zero = getAffineConstantExpr(0, ctx);
   auto broadcastInnerDim =
       AffineMap::get(map.getNumDims(), 0, {zero, innerDim}, ctx);
+  // llvm::outs()<<"minor id:"<<map.isMinorIdentity()<<"\n";
+  // llvm::outs()<<"broadcast inner dim:"<<(map == broadcastInnerDim)<<"\n";
+  // llvm::outs()<<"is transpose matrix
+  // load:"<<isTransposeMatrixLoadMap(map)<<"\n";
+  // llvm::outs()<<"map:"<<map<<"\n";
   return map.isMinorIdentity() || map == broadcastInnerDim ||
-         isTransposeMatrixLoadMap(map);
+         isTransposeMatrixLoadMap(map) || map.isProjectedPermutation();
 }
 
 // Return true if the transfer op can be converted to a MMA matrix store.

@@ -1650,6 +1650,266 @@ struct DropUnitDimFromElementwiseOps final
   }
 };
 
+/// For vectors with either leading or trailing unit dim, replaces:
+///   elementwise(a, b)
+/// with:
+///   sc_a = shape_cast(a)
+///   sc_b = shape_cast(b)
+///   res = elementwise(sc_a, sc_b)
+///   return shape_cast(res)
+/// The newly inserted shape_cast Ops fold (before elementwise Op) and then
+/// restore (after elementwise Op) the unit dim. Vectors `a` and `b` are
+/// required to be rank > 1.
+///
+/// Ex:
+/// ```
+///  %mul = arith.mulf %B_row, %A_row : vector<1x[4]xf32>
+///  %cast = vector.shape_cast %mul : vector<1x[4]xf32> to vector<[4]xf32>
+/// ```
+///
+/// gets converted to:
+///
+/// ```
+///  %B_row_sc = vector.shape_cast %B_row : vector<1x[4]xf32> to vector<[4]xf32>
+///  %A_row_sc = vector.shape_cast %A_row : vector<1x[4]xf32> to vector<[4]xf32>
+///  %mul = arith.mulf %B_row_sc, %A_row_sc : vector<[4]xf32>
+///  %cast_new = vector.shape_cast %mul : vector<[4]xf32> to vector<1x[4]xf32>
+///  %cast = vector.shape_cast %cast_new : vector<1x[4]xf32> to vector<[4]xf32>
+/// ```
+///
+/// Patterns for folding shape_casts should instantly eliminate `%cast_new` and
+/// `%cast`.
+// %8232 = vector.contract {indexing_maps = [affine_map<(d0, d1, d2, d3) -> (d0,
+// d2, d3)>, affine_map<(d0, d1, d2, d3) -> (d1, d2, d3)>, affine_map<(d0, d1,
+// d2, d3) -> (d0, d1)>], iterator_types = ["parallel", "parallel", "reduction",
+// "reduction"], kind = #vector.kind<add>} %22, %535, %8231 :
+// vector<16x1x16xf16>, vector<16x1x16xf16> into vector<16x16xf16>
+struct DropRedundantUnitDimsFromContractOps final
+    : public OpRewritePattern<vector::ContractionOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(vector::ContractionOp contractOp,
+                                PatternRewriter &rewriter) const override {
+
+    // Check the pre-conditions for input/output types.
+    auto resultVectorType =
+        dyn_cast<VectorType>(contractOp.getResult().getType());
+    if (!resultVectorType)
+      return failure();
+
+    auto lhsVectorType = cast<VectorType>(contractOp.getLhs().getType());
+    if (lhsVectorType.getRank() < 2)
+      return failure();
+
+    auto rhsVectorType = cast<VectorType>(contractOp.getRhs().getType());
+    if (rhsVectorType.getRank() < 2)
+      return failure();
+
+    // Pass prerequisties:
+    // 1. Check that there is more than one reduction dims.
+    // 2. Check that at least one of them is a unit dim.
+    // 3. (TODO) Maps have no symbols and are just IDs.
+    // 4. LHS and RHS are from TransferReadOps.
+    SmallVector<int64_t> reductionDims;
+    for (const auto &it : llvm::enumerate(contractOp.getIteratorTypes())) {
+      if (isReductionIterator(it.value())) {
+        reductionDims.push_back(it.index());
+      }
+    }
+    if (reductionDims.size() < 2)
+      return failure();
+    SmallVector<int64_t, 4> bounds;
+    contractOp.getIterationBounds(bounds);
+    llvm::SmallSetVector<int64_t, 2> unitReductionDims;
+    for (auto reductionDim : reductionDims) {
+      if (bounds[reductionDim] == 1)
+        unitReductionDims.insert(reductionDim);
+    }
+    if (unitReductionDims.empty())
+      return failure();
+
+    // Keep the fastest unit reduction dim if all reduction dims are unit.
+    // This is done to preserve contractionOp structure.
+    if (unitReductionDims.size() == reductionDims.size()) {
+      unitReductionDims.pop_back();
+    }
+    // Setup Reindexing map.
+    unsigned numDims = contractOp.getIteratorTypes().size();
+    unsigned updatedNumDims = numDims - unitReductionDims.size();
+    DenseMap<AffineExpr, AffineExpr> reindexingMap;
+    int dimOffset = 0;
+    for (int dim = 0; dim < numDims; dim++) {
+      if (unitReductionDims.count(dim)) {
+        dimOffset++;
+        continue;
+      }
+      if (dimOffset == 0)
+        continue;
+      AffineExpr dimExpr = rewriter.getAffineDimExpr(dim);
+      reindexingMap[dimExpr] = rewriter.getAffineDimExpr(dim - dimOffset);
+    }
+    // Setup new operands with ShapeCastOp and matching Indexing Maps.
+    // 1. Loops over all the operands
+    // 2. gets the dimensions to be dropped
+    // 3. Generate new vectorShape and IndexingMaps that drops those dimensions.
+    auto loc = contractOp.getLoc();
+    SmallVector<AffineMap, 4> maps = contractOp.getIndexingMapsArray();
+    SmallVector<AffineMap, 4> newMaps;
+    SmallVector<Value> newOperands;
+    for (const auto &it : llvm::enumerate(contractOp.getOperands())) {
+      // Setup dim to drop from operand POV.
+      SmallVector<int64_t> operandDimsToDrop;
+      for (auto &dimIdx : unitReductionDims) {
+        auto dim = rewriter.getAffineDimExpr(dimIdx);
+        if (auto dimToDrop = maps[it.index()].getResultPosition(dim)) {
+          operandDimsToDrop.push_back(*dimToDrop);
+        }
+      }
+      // If operand not involved skip shape cast and use original but update
+      // input dimensions.
+      if (operandDimsToDrop.empty()) {
+        newOperands.push_back(it.value());
+        auto newMap =
+            AffineMap::get(/*dimCount=*/updatedNumDims,
+                           /*symCount=*/0, maps[it.index()].getResults(),
+                           contractOp.getContext());
+        newMaps.emplace_back(newMap);
+        continue;
+      }
+
+      // Sort dims in descending order and drop one by one.
+      auto opVectorType = cast<VectorType>(it.value().getType());
+      llvm::sort(operandDimsToDrop,
+                 [&](int64_t lhs, int64_t rhs) { return lhs > rhs; });
+      VectorType newVType = VectorType::Builder(opVectorType);
+      SmallVector<AffineExpr, 4> newResults(maps[it.index()].getResults());
+      for (auto dimToDrop : operandDimsToDrop) {
+        newResults.erase(newResults.begin() + dimToDrop);
+        newVType = VectorType::Builder(newVType).dropDim(dimToDrop);
+      }
+
+      // Create ShapeCast with new shape.
+      auto opSC =
+          rewriter.create<vector::ShapeCastOp>(loc, newVType, it.value());
+      newOperands.push_back(opSC);
+
+      // Reindexing dims and create updated maps.
+      for (int i = 0; i < newResults.size(); i++) {
+        if (reindexingMap.count(newResults[i])) {
+          newResults[i] = reindexingMap[newResults[i]];
+        }
+      }
+      auto newMap =
+          AffineMap::get(/*dimCount=*/updatedNumDims,
+                         /*symCount=*/0, newResults, contractOp.getContext());
+      newMaps.push_back(newMap);
+    }
+
+    // Setup new iterators by removing unit reduction dims in descending order.
+    SmallVector<Attribute> newIterators(
+        contractOp.getIteratorTypes().getValue());
+    for (int i = unitReductionDims.size() - 1; i >= 0; --i) {
+      newIterators.erase(newIterators.begin() + unitReductionDims[i]);
+    }
+
+    rewriter.replaceOpWithNewOp<mlir::vector::ContractionOp>(
+        contractOp, newOperands[0], newOperands[1], newOperands[2],
+        rewriter.getAffineMapArrayAttr(newMaps),
+        rewriter.getArrayAttr(newIterators));
+    return success();
+  }
+};
+
+/// Drop inner most contiguous unit dimensions from transfer_read operand.
+class FoldTransferReadWithUnitDimShapeCast
+    : public OpRewritePattern<vector::ShapeCastOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(vector::ShapeCastOp shapeCastOp,
+                                PatternRewriter &rewriter) const override {
+
+    auto shapeCastTargetType =
+        dyn_cast_or_null<VectorType>(shapeCastOp.getResult().getType());
+    if (!shapeCastTargetType)
+      return failure();
+
+    auto readOp = dyn_cast_or_null<vector::TransferReadOp>(
+        shapeCastOp.getSource().getDefiningOp());
+    if (!readOp)
+      return failure();
+
+    if (readOp.getTransferRank() == 0)
+      return failure();
+
+    if (readOp.getMask())
+      return failure();
+
+    if (!readOp.getPermutationMap().isIdentity()) {
+      return failure();
+    }
+
+    auto srcType = dyn_cast<MemRefType>(readOp.getSource().getType());
+    if (!srcType || !srcType.hasStaticShape())
+      return failure();
+
+    auto readTargetType = readOp.getVectorType();
+    if (readTargetType.getRank() <= 1)
+      return failure();
+
+    // if (!readOp->hasOneUse()) {
+    //   llvm::outs()<<"Found something:"<<readOp<<"\n";
+    //   for (auto user : readOp->getUsers()) {
+    //     llvm::outs()<<"user:"<<*user<<"\n";
+    //   }
+    //   llvm::outs()<<"\n\n";
+    //   return failure();
+    // }
+
+    // Expects shape cast to be purely rank reducing.
+    if (shapeCastTargetType.getRank() >= readTargetType.getRank()) {
+      return failure();
+    }
+    auto readTargetShape = readTargetType.getShape();
+    auto shapeCastTargetShape = shapeCastTargetType.getShape();
+
+    // Extract the unit dim indices and fail if reduces non unit dims.
+    SmallVector<int64_t> unitDims;
+    int dimOffset = 0;
+    for (int64_t dimIdx = 0; dimIdx < readTargetType.getRank(); dimIdx++) {
+      if (readTargetShape[dimIdx] != shapeCastTargetShape[dimIdx - dimOffset]) {
+        if (readTargetShape[dimIdx] == 1) {
+          unitDims.push_back(dimIdx);
+          dimOffset++;
+          continue;
+        } else {
+          return failure();
+        }
+      }
+    }
+    int rankDiff = readTargetType.getRank() - shapeCastTargetType.getRank();
+    if (unitDims.size() != rankDiff)
+      return failure();
+
+    // Create new target type.
+    auto newReadTargetType = shapeCastTargetType;
+    // Create permutation map to represent unit dim dropping.
+    auto newIndexingMap =
+        rewriter.getMultiDimIdentityMap(readTargetType.getRank());
+    newIndexingMap = newIndexingMap.dropResults(unitDims);
+    // Create new inbounds.
+    SmallVector<Attribute> newInBounds(readOp.getInBoundsAttr().getValue());
+    for (int i = unitDims.size() - 1; i >= 0; --i) {
+      newInBounds.erase(newInBounds.begin() + unitDims[i]);
+    }
+    // Keeps ordering of transfer-reads intact.
+    rewriter.setInsertionPointAfter(readOp);
+    rewriter.replaceOpWithNewOp<vector::TransferReadOp>(
+        shapeCastOp, newReadTargetType, readOp.getSource(), readOp.getIndices(),
+        AffineMapAttr::get(newIndexingMap), readOp.getPadding(),
+        /*mask=*/Value(), rewriter.getArrayAttr(newInBounds));
+    return success();
+  }
+};
+
 /// Pattern to eliminate redundant zero-constants added to reduction operands.
 /// It's enough for there to be one initial zero value, so we can eliminate the
 /// extra ones that feed into `vector.reduction <add>`. These get created by the
@@ -1774,8 +2034,10 @@ void mlir::vector::populateShapeCastFoldingPatterns(RewritePatternSet &patterns,
 
 void mlir::vector::populateDropUnitDimWithShapeCastPatterns(
     RewritePatternSet &patterns, PatternBenefit benefit) {
-  patterns.add<DropUnitDimFromElementwiseOps, ShapeCastOpFolder>(
-      patterns.getContext(), benefit);
+  patterns
+      .add<DropUnitDimFromElementwiseOps, DropRedundantUnitDimsFromContractOps,
+           FoldTransferReadWithUnitDimShapeCast, ShapeCastOpFolder>(
+          patterns.getContext(), benefit);
 }
 
 void mlir::vector::populateBubbleVectorBitCastOpPatterns(
