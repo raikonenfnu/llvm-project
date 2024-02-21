@@ -1843,26 +1843,20 @@ class FoldTransferReadWithUnitDimShapeCast
     if (readOp.getMask())
       return failure();
 
-    if (!readOp.getPermutationMap().isIdentity()) {
+    if (!readOp.getPermutationMap().isMinorIdentity()) {
+      // llvm::outs()<<"read:"<<readOp<<"\n";
+      // llvm::outs()<<"perm map:";
+      // llvm::outs()<<readOp.getPermutationMap()<<"\n";
       return failure();
     }
 
-    auto srcType = dyn_cast<MemRefType>(readOp.getSource().getType());
-    if (!srcType || !srcType.hasStaticShape())
+    auto readSrcType = dyn_cast<MemRefType>(readOp.getSource().getType());
+    if (!readSrcType || !readSrcType.hasStaticShape())
       return failure();
 
     auto readTargetType = readOp.getVectorType();
     if (readTargetType.getRank() <= 1)
       return failure();
-
-    // if (!readOp->hasOneUse()) {
-    //   llvm::outs()<<"Found something:"<<readOp<<"\n";
-    //   for (auto user : readOp->getUsers()) {
-    //     llvm::outs()<<"user:"<<*user<<"\n";
-    //   }
-    //   llvm::outs()<<"\n\n";
-    //   return failure();
-    // }
 
     // Expects shape cast to be purely rank reducing.
     if (shapeCastTargetType.getRank() >= readTargetType.getRank()) {
@@ -1878,22 +1872,15 @@ class FoldTransferReadWithUnitDimShapeCast
       if (readTargetShape[dimIdx] != shapeCastTargetShape[dimIdx - dimOffset]) {
         if (readTargetShape[dimIdx] == 1) {
           unitDims.push_back(dimIdx);
-          dimOffset++;
-          continue;
-        } else {
-          return failure();
         }
+        dimOffset++;
       }
     }
-    int rankDiff = readTargetType.getRank() - shapeCastTargetType.getRank();
-    if (unitDims.size() != rankDiff)
-      return failure();
 
     // Create new target type.
     auto newReadTargetType = shapeCastTargetType;
     // Create permutation map to represent unit dim dropping.
-    auto newIndexingMap =
-        rewriter.getMultiDimIdentityMap(readTargetType.getRank());
+    auto newIndexingMap = readOp.getPermutationMap();
     newIndexingMap = newIndexingMap.dropResults(unitDims);
     // Create new inbounds.
     SmallVector<Attribute> newInBounds(readOp.getInBoundsAttr().getValue());

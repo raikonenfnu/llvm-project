@@ -12,6 +12,7 @@
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
 #include "mlir/Dialect/MemRef/Transforms/Transforms.h"
@@ -32,10 +33,24 @@ using namespace mlir;
 
 /// Return true if the op fully overwrite the given `buffer` value.
 static bool overrideBuffer(Operation *op, Value buffer) {
-  auto copyOp = dyn_cast<memref::CopyOp>(op);
-  if (!copyOp)
-    return false;
-  return copyOp.getTarget() == buffer;
+  if (auto copyOp = dyn_cast<memref::CopyOp>(op))
+    return copyOp.getTarget() == buffer;
+  if (auto genericOp = dyn_cast<mlir::linalg::GenericOp>(op)) {
+    // Check that buffer is not part of input.
+    for (auto dpsInput : genericOp.getDpsInputs()) {
+      if (dpsInput == buffer)
+        return false;
+    }
+    // Check that generic has one init and the init is our `buffer`.
+    // Also Ensure that init has no use in payload.
+    if (genericOp.getNumDpsInits() != 1)
+      return false;
+    auto dpsInit = genericOp.getDpsInitOperand(0);
+    if (dpsInit->get() != buffer)
+      return false;
+    return !genericOp.payloadUsesValueFromOperand(dpsInit);
+  }
+  return false;
 }
 
 /// Replace the uses of `oldOp` with the given `val` and for subview uses
