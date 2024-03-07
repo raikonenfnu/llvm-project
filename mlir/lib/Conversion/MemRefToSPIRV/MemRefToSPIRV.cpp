@@ -140,7 +140,7 @@ static bool isAllocationSupported(Operation *allocOp, MemRefType type) {
   Type elementType = type.getElementType();
   if (auto vecType = dyn_cast<VectorType>(elementType))
     elementType = vecType.getElementType();
-  return elementType.isIntOrFloat();
+  return elementType.isIntOrIndexOrFloat();
 }
 
 /// Returns the scope to use for atomic operations use for emulating store

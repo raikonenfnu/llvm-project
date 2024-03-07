@@ -244,7 +244,7 @@ struct VectorInsertOpConvert final
                                          "unsupported dest vector type");
 
     // Special case for inserting scalar values into size-1 vectors.
-    if (insertOp.getSourceType().isIntOrFloat() &&
+    if (insertOp.getSourceType().isIntOrIndexOrFloat() &&
         insertOp.getDestVectorType().getNumElements() == 1) {
       rewriter.replaceOp(insertOp, adaptor.getSource());
       return success();
