@@ -578,7 +578,6 @@ struct WarpOpTransferWrite : public OpRewritePattern<WarpExecuteOnLane0Op> {
           rewriter, loc, d0 + scale * d1, {indices[indexPos], laneId});
     }
     newWriteOp.getIndicesMutable().assign(indices);
-
     return success();
   }
 
@@ -601,7 +600,6 @@ struct WarpOpTransferWrite : public OpRewritePattern<WarpExecuteOnLane0Op> {
     if (llvm::all_of(warpOp.getOps(),
                      llvm::IsaPred<vector::TransferWriteOp, vector::YieldOp>))
       return failure();
-
     SmallVector<Value> yieldValues = {writeOp.getVector()};
     SmallVector<Type> retTypes = {vecType};
     SmallVector<size_t> newRetIndices;
@@ -1107,6 +1105,7 @@ struct WarpOpShapeCast : public OpRewritePattern<WarpExecuteOnLane0Op> {
     auto castDistributedType =
         cast<VectorType>(warpOp->getResultTypes()[operandNumber]);
     VectorType castOriginalType = oldCastOp.getSourceVectorType();
+    VectorType castDstType = oldCastOp.getType();
     VectorType castResultType = castDistributedType;
 
     // We expect the distributed type to have a smaller rank than the original
@@ -1114,8 +1113,23 @@ struct WarpOpShapeCast : public OpRewritePattern<WarpExecuteOnLane0Op> {
     unsigned castDistributedRank = castDistributedType.getRank();
     unsigned castOriginalRank = castOriginalType.getRank();
     if (castDistributedRank < castOriginalRank) {
-      SmallVector<int64_t> shape(castOriginalRank - castDistributedRank, 1);
-      llvm::append_range(shape, castDistributedType.getShape());
+      SmallVector<int64_t> shape;
+      // Select where to prepend the ones based on which dims gets collapsed.
+      auto collapsedDims = getReassociationIndicesForCollapse(
+          castOriginalType.getShape(), castDstType.getShape());
+      if (collapsedDims && collapsedDims->size() == castDistributedRank) {
+        for (auto [idx, indices] : enumerate(collapsedDims.value())) {
+          if (indices.size() > 1) {
+            shape.append(SmallVector<int64_t>(indices.size() - 1, 1));
+          }
+          shape.push_back(castDistributedType.getShape()[idx]);
+        }
+      } else {
+        llvm::append_range(
+            shape,
+            SmallVector<int64_t>(castOriginalRank - castDistributedRank, 1));
+        llvm::append_range(shape, castDistributedType.getShape());
+      }
       castDistributedType =
           VectorType::get(shape, castDistributedType.getElementType());
     }
