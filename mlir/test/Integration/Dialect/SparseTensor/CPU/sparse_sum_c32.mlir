@@ -5,14 +5,15 @@
 // config could be moved to lit.local.cfg. However, there are downstream users that
 //  do not use these LIT config files. Hence why this is kept inline.
 //
-// DEFINE: %{sparse_compiler_opts} = enable-runtime-library=true
-// DEFINE: %{sparse_compiler_opts_sve} = enable-arm-sve=true %{sparse_compiler_opts}
-// DEFINE: %{compile} = mlir-opt %s --sparse-compiler="%{sparse_compiler_opts}"
-// DEFINE: %{compile_sve} = mlir-opt %s --sparse-compiler="%{sparse_compiler_opts_sve}"
+// DEFINE: %{sparsifier_opts} = enable-runtime-library=true
+// DEFINE: %{sparsifier_opts_sve} = enable-arm-sve=true %{sparsifier_opts}
+// DEFINE: %{compile} = mlir-opt %s --sparsifier="%{sparsifier_opts}"
+// DEFINE: %{compile_sve} = mlir-opt %s --sparsifier="%{sparsifier_opts_sve}"
 // DEFINE: %{run_libs} = -shared-libs=%mlir_c_runner_utils,%mlir_runner_utils
-// DEFINE: %{run_opts} = -e entry -entry-point-result=void
-// DEFINE: %{run} = mlir-cpu-runner %{run_opts} %{run_libs}
-// DEFINE: %{run_sve} = %mcr_aarch64_cmd --march=aarch64 --mattr="+sve" %{run_opts} %{run_libs}
+// DEFINE: %{run_libs_sve} = -shared-libs=%native_mlir_runner_utils,%native_mlir_c_runner_utils
+// DEFINE: %{run_opts} = -e main -entry-point-result=void
+// DEFINE: %{run} = mlir-runner %{run_opts} %{run_libs}
+// DEFINE: %{run_sve} = %mcr_aarch64_cmd --march=aarch64 --mattr="+sve" %{run_opts} %{run_libs_sve}
 //
 // DEFINE: %{env} =
 //--------------------------------------------------------------------------------------------------
@@ -21,11 +22,11 @@
 // RUN: %{compile} | env %{env} %{run} | FileCheck %s
 //
 // Do the same run, but now with direct IR generation.
-// REDEFINE: %{sparse_compiler_opts} = enable-runtime-library=false
+// REDEFINE: %{sparsifier_opts} = enable-runtime-library=false
 // RUN: %{compile} | env %{env} %{run} | FileCheck %s
 //
 // Do the same run, but now with vectorization.
-// REDEFINE: %{sparse_compiler_opts} = enable-runtime-library=false vl=2 reassociate-fp-reductions=true enable-index-optimizations=true
+// REDEFINE: %{sparsifier_opts} = enable-runtime-library=false vl=2 reassociate-fp-reductions=true enable-index-optimizations=true
 // RUN: %{compile} | env %{env} %{run} | FileCheck %s
 //
 // Do the same run, but now with  VLA vectorization.
@@ -34,10 +35,10 @@
 // TODO: The test currently only operates on the triangular part of the
 // symmetric matrix.
 
-!Filename = !llvm.ptr<i8>
+!Filename = !llvm.ptr
 
 #SparseMatrix = #sparse_tensor.encoding<{
-  lvlTypes = [ "compressed", "compressed" ]
+  map = (d0, d1) -> (d0 : compressed, d1 : compressed)
 }>
 
 #trait_sum_reduce = {
@@ -75,7 +76,7 @@ module {
   //
   // Main driver that reads matrix from file and calls the sparse kernel.
   //
-  func.func @entry() {
+  func.func @main() {
     //%d0 = arith.constant 0.0 : complex<f64>
     %d0 = complex.constant [0.0 : f64, 0.0 : f64] : complex<f64>
     %c0 = arith.constant 0 : index
@@ -83,7 +84,7 @@ module {
     // Setup memory for a single reduction scalar,
     // initialized to zero.
     // TODO: tensor.from_elements does not support complex.
-    %alloc = bufferization.alloc_tensor() : tensor<complex<f64>>
+    %alloc = tensor.empty() : tensor<complex<f64>>
     %x = tensor.insert %d0 into %alloc[] : tensor<complex<f64>>
 
     // Read the sparse matrix from file, construct sparse storage.
@@ -106,6 +107,7 @@ module {
     vector.print %imag : f64
 
     // Release the resources.
+    bufferization.dealloc_tensor %0 : tensor<complex<f64>>
     bufferization.dealloc_tensor %a : tensor<?x?xcomplex<f64>, #SparseMatrix>
 
     return

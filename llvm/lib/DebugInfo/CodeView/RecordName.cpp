@@ -278,8 +278,9 @@ static int getSymbolNameOffset(CVSymbol Sym) {
   // See SectionSym
   case SymbolKind::S_SECTION:
     return 16;
-  // See CoffGroupSym
+  // See CoffGroupSym, RegRelativeIndirSym
   case SymbolKind::S_COFFGROUP:
+  case SymbolKind::S_REGREL32_INDIR:
     return 14;
   // See PublicSym32, FileStaticSym, RegRelativeSym, DataSym, ThreadLocalDataSym
   case SymbolKind::S_PUB32:
@@ -324,7 +325,7 @@ StringRef llvm::codeview::getSymbolName(CVSymbol Sym) {
   if (Sym.kind() == SymbolKind::S_CONSTANT) {
     // S_CONSTANT is preceded by an APSInt, which has a variable length.  So we
     // have to do a full deserialization.
-    BinaryStreamReader Reader(Sym.content(), llvm::support::little);
+    BinaryStreamReader Reader(Sym.content(), llvm::endianness::little);
     // The container doesn't matter for single records.
     SymbolRecordMapping Mapping(Reader, CodeViewContainer::ObjectFile);
     ConstantSym Const(SymbolKind::S_CONSTANT);

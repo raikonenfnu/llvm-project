@@ -1,6 +1,3 @@
-'new issue':
-  - '/.*/'
-
 'clang':
   - '/\bclang(?!\-)\b/i'
 
@@ -10,11 +7,14 @@
 'clang-tidy':
   - '/\bclang-tidy/i'
 
+'clang:temporal-safety':
+  - '/LifetimeSafety/i'
+
 'libc++':
   - '/libc[+x]{2}(?!\-)/i'
 
-'libc++-abi':
-  - '/libc[+x]{2}-abi/i'
+'libc++abi':
+  - '/libc[+x]{2}-?abi/i'
 
 'libc':
   - '/\blibc(?![-+])\b/i'
@@ -30,3 +30,12 @@
 
 'bolt':
   - '/\bbolt(?!\-)\b/i'
+
+'infra:commit-access-request':
+  - '/Request Commit Access/'
+
+'false-positive':
+  - '\bfalse[- ]positive\b'
+
+'false-negative':
+  - '\bfalse[- ]negative\b'

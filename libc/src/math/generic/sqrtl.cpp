@@ -7,13 +7,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "src/math/sqrtl.h"
-#include "src/__support/FPUtil/sqrt.h"
-#include "src/__support/common.h"
+#include "src/__support/math/sqrtl.h"
 
-namespace __llvm_libc {
+namespace LIBC_NAMESPACE_DECL {
 
 LLVM_LIBC_FUNCTION(long double, sqrtl, (long double x)) {
-  return fputil::sqrt(x);
+  return math::sqrtl(x);
 }
 
-} // namespace __llvm_libc
+} // namespace LIBC_NAMESPACE_DECL

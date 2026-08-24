@@ -43,9 +43,19 @@ std::optional<Constant<ExtentType>> AsConstantShape(
     FoldingContext &, const Shape &);
 Constant<ExtentType> AsConstantShape(const ConstantSubscripts &);
 
+// AsConstantExtents returns a constant shape.  It may contain
+// invalid negative extents; use HasNegativeExtent() to check.
 ConstantSubscripts AsConstantExtents(const Constant<ExtentType> &);
 std::optional<ConstantSubscripts> AsConstantExtents(
     FoldingContext &, const Shape &);
+inline std::optional<ConstantSubscripts> AsConstantExtents(
+    FoldingContext &foldingContext, const std::optional<Shape> &maybeShape) {
+  if (maybeShape) {
+    return AsConstantExtents(foldingContext, *maybeShape);
+  }
+  return std::nullopt;
+}
+
 Shape AsShape(const ConstantSubscripts &);
 std::optional<Shape> AsShape(const std::optional<ConstantSubscripts> &);
 
@@ -60,6 +70,9 @@ std::optional<Shape> Fold(FoldingContext &, std::optional<Shape> &&);
 template <typename A>
 std::optional<Shape> GetShape(
     FoldingContext &, const A &, bool invariantOnly = true);
+template <typename A>
+std::optional<Shape> GetShape(
+    FoldingContext *, const A &, bool invariantOnly = true);
 template <typename A>
 std::optional<Shape> GetShape(const A &, bool invariantOnly = true);
 
@@ -110,6 +123,14 @@ MaybeExtentExpr GetExtent(const Subscript &, const NamedEntity &, int dimension,
 MaybeExtentExpr GetExtent(FoldingContext &, const Subscript &,
     const NamedEntity &, int dimension, bool invariantOnly = true);
 
+// Similar analyses for coarrays
+MaybeExtentExpr GetLCOBOUND(
+    const Symbol &, int dimension, bool invariantOnly = true);
+MaybeExtentExpr GetUCOBOUND(
+    const Symbol &, int dimension, bool invariantOnly = true);
+Shape GetLCOBOUNDs(const Symbol &, bool invariantOnly = true);
+Shape GetUCOBOUNDs(const Symbol &, bool invariantOnly = true);
+
 // Compute an element count for a triplet or trip count for a DO.
 ExtentExpr CountTrips(
     ExtentExpr &&lower, ExtentExpr &&upper, ExtentExpr &&stride);
@@ -121,9 +142,17 @@ MaybeExtentExpr CountTrips(
 // Computes SIZE() == PRODUCT(shape)
 MaybeExtentExpr GetSize(Shape &&);
 ConstantSubscript GetSize(const ConstantSubscripts &);
+inline MaybeExtentExpr GetSize(const std::optional<Shape> &maybeShape) {
+  if (maybeShape) {
+    return GetSize(Shape(*maybeShape));
+  }
+  return std::nullopt;
+}
 
 // Utility predicate: does an expression reference any implied DO index?
 bool ContainsAnyImpliedDoIndex(const ExtentExpr &);
+
+// GetShape()
 
 class GetShapeHelper
     : public AnyTraverse<GetShapeHelper, std::optional<Shape>> {
@@ -131,14 +160,8 @@ public:
   using Result = std::optional<Shape>;
   using Base = AnyTraverse<GetShapeHelper, Result>;
   using Base::operator();
-  explicit GetShapeHelper(bool invariantOnly)
-      : Base{*this}, invariantOnly_{invariantOnly} {}
-  explicit GetShapeHelper(FoldingContext &c, bool invariantOnly)
-      : Base{*this}, context_{&c}, invariantOnly_{invariantOnly} {}
-  explicit GetShapeHelper(
-      FoldingContext &c, bool useResultSymbolShape, bool invariantOnly)
-      : Base{*this}, context_{&c}, useResultSymbolShape_{useResultSymbolShape},
-        invariantOnly_{invariantOnly} {}
+  GetShapeHelper(FoldingContext *context, bool invariantOnly)
+      : Base{*this}, context_{context}, invariantOnly_{invariantOnly} {}
 
   Result operator()(const ImpliedDoIndex &) const { return ScalarShape(); }
   Result operator()(const DescriptorInquiry &) const { return ScalarShape(); }
@@ -166,10 +189,29 @@ public:
   Result operator()(const ArrayConstructor<T> &aconst) const {
     return Shape{GetArrayConstructorExtent(aconst)};
   }
+  template <typename T>
+  Result operator()(const ConditionalExpr<T> &conditional) const {
+    // Per F2023 10.1.4(7), the shape is that of the selected branch.
+    // When all branches have identical static extents, return the common shape.
+    int rank{conditional.thenValue().Rank()};
+    Result thenShape{(*this)(conditional.thenValue())};
+    if (!thenShape) {
+      return Shape(rank, std::nullopt);
+    }
+    Result elseShape{(*this)(conditional.elseValue())};
+    if (thenShape != elseShape) {
+      return Shape(rank, std::nullopt);
+    }
+    return thenShape;
+  }
   template <typename D, typename R, typename LO, typename RO>
   Result operator()(const Operation<D, R, LO, RO> &operation) const {
-    if (operation.right().Rank() > 0) {
-      return (*this)(operation.right());
+    if (int rr{operation.right().Rank()}; rr > 0) {
+      if (int lr{operation.left().Rank()}; lr == 0 || lr == rr) {
+        return (*this)(operation.right());
+      } else {
+        return std::nullopt;
+      }
     } else {
       return (*this)(operation.left());
     }
@@ -187,9 +229,7 @@ private:
     return common::visit(
         common::visitors{
             [&](const Expr<T> &x) -> MaybeExtentExpr {
-              if (auto xShape{!useResultSymbolShape_ ? (*this)(x)
-                          : context_                 ? GetShape(*context_, x)
-                                                     : GetShape(x)}) {
+              if (auto xShape{(*this)(x)}) {
                 // Array values in array constructors get linearized.
                 return GetSize(std::move(*xShape));
               } else {
@@ -233,7 +273,7 @@ private:
   void AccumulateExtent(ExtentExpr &, ExtentExpr &&) const;
 
   FoldingContext *context_{nullptr};
-  bool useResultSymbolShape_{true};
+  mutable bool useResultSymbolShape_{true};
   // When invariantOnly=false, the returned shape need not be invariant
   // in its scope; in particular, it may contain references to dummy arguments.
   bool invariantOnly_{true};
@@ -241,27 +281,27 @@ private:
 
 template <typename A>
 std::optional<Shape> GetShape(
-    FoldingContext &context, const A &x, bool invariantOnly) {
+    FoldingContext *context, const A &x, bool invariantOnly) {
   if (auto shape{GetShapeHelper{context, invariantOnly}(x)}) {
-    return Fold(context, std::move(shape));
+    if (context) {
+      return Fold(*context, std::move(shape));
+    } else {
+      return shape;
+    }
   } else {
     return std::nullopt;
   }
 }
 
 template <typename A>
-std::optional<Shape> GetShape(const A &x, bool invariantOnly) {
-  return GetShapeHelper{invariantOnly}(x);
+std::optional<Shape> GetShape(
+    FoldingContext &context, const A &x, bool invariantOnly) {
+  return GetShape(&context, x, invariantOnly);
 }
 
 template <typename A>
-std::optional<Shape> GetShape(
-    FoldingContext *context, const A &x, bool invariantOnly = true) {
-  if (context) {
-    return GetShape(*context, x, invariantOnly);
-  } else {
-    return GetShapeHelper{invariantOnly}(x);
-  }
+std::optional<Shape> GetShape(const A &x, bool invariantOnly) {
+  return GetShape(/*context=*/nullptr, x, invariantOnly);
 }
 
 template <typename A>
@@ -274,24 +314,27 @@ std::optional<Constant<ExtentType>> GetConstantShape(
   }
 }
 
+// Combines GetShape and AsConstantExtents; only returns valid shapes.
 template <typename A>
 std::optional<ConstantSubscripts> GetConstantExtents(
     FoldingContext &context, const A &x) {
   if (auto shape{GetShape(context, x, /*invariantOnly=*/true)}) {
-    return AsConstantExtents(context, *shape);
-  } else {
-    return std::nullopt;
+    if (auto extents{AsConstantExtents(context, *shape)}) {
+      if (!HasNegativeExtent(*extents)) {
+        return extents;
+      }
+    }
   }
+  return std::nullopt;
 }
 
 // Get shape that does not depends on callee scope symbols if the expression
 // contains calls. Return std::nullopt if it is not possible to build such shape
-// (e.g. for calls to array functions whose result shape depends on the
+// (e.g. for calls to array-valued functions whose result shape depends on the
 // arguments).
 template <typename A>
 std::optional<Shape> GetContextFreeShape(FoldingContext &context, const A &x) {
-  return GetShapeHelper{
-      context, /*useResultSymbolShape=*/false, /*invariantOnly=*/true}(x);
+  return GetShapeHelper{&context, /*invariantOnly=*/true}(x);
 }
 
 // Compilation-time shape conformance checking, when corresponding extents

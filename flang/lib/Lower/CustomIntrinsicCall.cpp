@@ -24,8 +24,7 @@
 /// runtime? This is a special case because MIN and MAX can have any number of
 /// arguments.
 static bool isMinOrMaxWithDynamicallyOptionalArg(
-    llvm::StringRef name, const Fortran::evaluate::ProcedureRef &procRef,
-    Fortran::evaluate::FoldingContext &foldingContext) {
+    llvm::StringRef name, const Fortran::evaluate::ProcedureRef &procRef) {
   if (name != "min" && name != "max")
     return false;
   const auto &args = procRef.arguments();
@@ -35,7 +34,7 @@ static bool isMinOrMaxWithDynamicallyOptionalArg(
   for (std::size_t i = 2; i < argSize; ++i) {
     if (auto *expr =
             Fortran::evaluate::UnwrapExpr<Fortran::lower::SomeExpr>(args[i]))
-      if (Fortran::evaluate::MayBePassedAsAbsentOptional(*expr, foldingContext))
+      if (Fortran::evaluate::MayBePassedAsAbsentOptional(*expr))
         return true;
   }
   return false;
@@ -45,14 +44,12 @@ static bool isMinOrMaxWithDynamicallyOptionalArg(
 /// at runtime? This is a special case because the SIZE value to be applied
 /// when absent is not zero.
 static bool isIshftcWithDynamicallyOptionalArg(
-    llvm::StringRef name, const Fortran::evaluate::ProcedureRef &procRef,
-    Fortran::evaluate::FoldingContext &foldingContext) {
+    llvm::StringRef name, const Fortran::evaluate::ProcedureRef &procRef) {
   if (name != "ishftc" || procRef.arguments().size() < 3)
     return false;
   auto *expr = Fortran::evaluate::UnwrapExpr<Fortran::lower::SomeExpr>(
       procRef.arguments()[2]);
-  return expr &&
-         Fortran::evaluate::MayBePassedAsAbsentOptional(*expr, foldingContext);
+  return expr && Fortran::evaluate::MayBePassedAsAbsentOptional(*expr);
 }
 
 /// Is this a call to ASSOCIATED where the TARGET is an OPTIONAL (but not a
@@ -67,8 +64,7 @@ static bool isIshftcWithDynamicallyOptionalArg(
 /// TARGET that are OPTIONAL get conditionally emboxed here to convey the
 /// optional aspect to the runtime.
 static bool isAssociatedWithDynamicallyOptionalArg(
-    llvm::StringRef name, const Fortran::evaluate::ProcedureRef &procRef,
-    Fortran::evaluate::FoldingContext &foldingContext) {
+    llvm::StringRef name, const Fortran::evaluate::ProcedureRef &procRef) {
   if (name != "associated" || procRef.arguments().size() < 2)
     return false;
   auto *expr = Fortran::evaluate::UnwrapExpr<Fortran::lower::SomeExpr>(
@@ -84,10 +80,9 @@ bool Fortran::lower::intrinsicRequiresCustomOptionalHandling(
     const Fortran::evaluate::SpecificIntrinsic &intrinsic,
     AbstractConverter &converter) {
   llvm::StringRef name = intrinsic.name;
-  Fortran::evaluate::FoldingContext &fldCtx = converter.getFoldingContext();
-  return isMinOrMaxWithDynamicallyOptionalArg(name, procRef, fldCtx) ||
-         isIshftcWithDynamicallyOptionalArg(name, procRef, fldCtx) ||
-         isAssociatedWithDynamicallyOptionalArg(name, procRef, fldCtx);
+  return isMinOrMaxWithDynamicallyOptionalArg(name, procRef) ||
+         isIshftcWithDynamicallyOptionalArg(name, procRef) ||
+         isAssociatedWithDynamicallyOptionalArg(name, procRef);
 }
 
 /// Generate the FIR+MLIR operations for the generic intrinsic \p name
@@ -106,9 +101,9 @@ Fortran::lower::genIntrinsicCall(fir::FirOpBuilder &builder, mlir::Location loc,
     mlir::Value addr = fir::getBase(result);
     if (auto *box = result.getBoxOf<fir::BoxValue>())
       addr =
-          builder.create<fir::BoxAddrOp>(loc, box->getMemTy(), box->getAddr());
+          fir::BoxAddrOp::create(builder, loc, box->getMemTy(), box->getAddr());
     fir::FirOpBuilder *bldr = &builder;
-    stmtCtx.attachCleanup([=]() { bldr->create<fir::FreeMemOp>(loc, addr); });
+    stmtCtx.attachCleanup([=]() { fir::FreeMemOp::create(*bldr, loc, addr); });
   }
   return result;
 }
@@ -123,15 +118,15 @@ static void prepareMinOrMaxArguments(
   assert(retTy && "MIN and MAX must have a return type");
   mlir::Type resultType = *retTy;
   mlir::Location loc = converter.getCurrentLocation();
-  if (fir::isa_char(resultType))
+  if (fir::isa_char(fir::unwrapSequenceType(resultType)))
     TODO(loc, "CHARACTER MIN and MAX with dynamically optional arguments");
   for (auto arg : llvm::enumerate(procRef.arguments())) {
     const auto *expr =
         Fortran::evaluate::UnwrapExpr<Fortran::lower::SomeExpr>(arg.value());
     if (!expr)
       continue;
-    if (arg.index() <= 1 || !Fortran::evaluate::MayBePassedAsAbsentOptional(
-                                *expr, converter.getFoldingContext())) {
+    if (arg.index() <= 1 ||
+        !Fortran::evaluate::MayBePassedAsAbsentOptional(*expr)) {
       // Non optional arguments.
       prepareOtherArgument(*expr, fir::LowerIntrinsicArgAs::Value);
     } else {
@@ -176,9 +171,9 @@ lowerMinOrMax(fir::FirOpBuilder &builder, mlir::Location loc,
                 args.emplace_back(getOperand(opIndex, loadOperand));
                 fir::ExtendedValue newExtremum = genIntrinsicCall(
                     builder, loc, name, resultType, args, stmtCtx);
-                builder.create<fir::ResultOp>(loc, fir::getBase(newExtremum));
+                fir::ResultOp::create(builder, loc, fir::getBase(newExtremum));
               })
-              .genElse([&]() { builder.create<fir::ResultOp>(loc, extremum); })
+              .genElse([&]() { fir::ResultOp::create(builder, loc, extremum); })
               .getResults()[0];
     } else {
       // Argument is know to be present at compile time.
@@ -204,8 +199,7 @@ static void prepareIshftcArguments(
         Fortran::evaluate::UnwrapExpr<Fortran::lower::SomeExpr>(arg.value());
     assert(expr && "expected all ISHFTC argument to be textually present here");
     if (arg.index() == 2) {
-      assert(Fortran::evaluate::MayBePassedAsAbsentOptional(
-                 *expr, converter.getFoldingContext()) &&
+      assert(Fortran::evaluate::MayBePassedAsAbsentOptional(*expr) &&
              "expected ISHFTC SIZE arg to be dynamically optional");
       prepareOptionalArgument(*expr);
     } else {
@@ -233,22 +227,23 @@ lowerIshftc(fir::FirOpBuilder &builder, mlir::Location loc,
   args.push_back(getOperand(1, loadOperand));
   auto iPC = isPresentCheck(2);
   assert(iPC.has_value());
-  args.push_back(builder
-                     .genIfOp(loc, {resultType}, *iPC,
-                              /*withElseRegion=*/true)
-                     .genThen([&]() {
-                       fir::ExtendedValue sizeExv = getOperand(2, loadOperand);
-                       mlir::Value size = builder.createConvert(
-                           loc, resultType, fir::getBase(sizeExv));
-                       builder.create<fir::ResultOp>(loc, size);
-                     })
-                     .genElse([&]() {
-                       mlir::Value bitSize = builder.createIntegerConstant(
-                           loc, resultType,
-                           resultType.cast<mlir::IntegerType>().getWidth());
-                       builder.create<fir::ResultOp>(loc, bitSize);
-                     })
-                     .getResults()[0]);
+  args.push_back(
+      builder
+          .genIfOp(loc, {resultType}, *iPC,
+                   /*withElseRegion=*/true)
+          .genThen([&]() {
+            fir::ExtendedValue sizeExv = getOperand(2, loadOperand);
+            mlir::Value size =
+                builder.createConvert(loc, resultType, fir::getBase(sizeExv));
+            fir::ResultOp::create(builder, loc, size);
+          })
+          .genElse([&]() {
+            mlir::Value bitSize = builder.createIntegerConstant(
+                loc, resultType,
+                mlir::cast<mlir::IntegerType>(resultType).getWidth());
+            fir::ResultOp::create(builder, loc, bitSize);
+          })
+          .getResults()[0]);
   return genIntrinsicCall(builder, loc, name, resultType, args, stmtCtx);
 }
 
@@ -285,10 +280,10 @@ lowerAssociated(fir::FirOpBuilder &builder, mlir::Location loc,
   // while the optionality of the target pointer/allocatable is what must be
   // checked here.
   mlir::Value isPresent =
-      builder.create<fir::IsPresentOp>(loc, builder.getI1Type(), targetBase);
+      fir::IsPresentOp::create(builder, loc, builder.getI1Type(), targetBase);
   mlir::Type targetType = fir::unwrapRefType(targetBase.getType());
   mlir::Type targetValueType = fir::unwrapPassByRefType(targetType);
-  mlir::Type boxType = targetType.isa<fir::BaseBoxType>()
+  mlir::Type boxType = mlir::isa<fir::BaseBoxType>(targetType)
                            ? targetType
                            : fir::BoxType::get(targetValueType);
   fir::BoxValue targetBox =
@@ -298,11 +293,12 @@ lowerAssociated(fir::FirOpBuilder &builder, mlir::Location loc,
           .genThen([&]() {
             mlir::Value box = builder.createBox(loc, targetExv);
             mlir::Value cast = builder.createConvert(loc, boxType, box);
-            builder.create<fir::ResultOp>(loc, cast);
+            fir::ResultOp::create(builder, loc, cast);
           })
           .genElse([&]() {
-            mlir::Value absentBox = builder.create<fir::AbsentOp>(loc, boxType);
-            builder.create<fir::ResultOp>(loc, absentBox);
+            mlir::Value absentBox =
+                fir::AbsentOp::create(builder, loc, boxType);
+            fir::ResultOp::create(builder, loc, absentBox);
           })
           .getResults()[0];
   args.emplace_back(std::move(targetBox));

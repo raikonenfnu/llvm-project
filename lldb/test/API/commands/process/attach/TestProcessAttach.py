@@ -14,6 +14,7 @@ exe_name = "ProcessAttach"  # Must match Makefile
 
 
 class ProcessAttachTestCase(TestBase):
+    SHARED_BUILD_TESTCASE = False
     NO_DEBUG_INFO_TESTCASE = True
 
     def setUp(self):
@@ -59,11 +60,7 @@ class ProcessAttachTestCase(TestBase):
     def test_attach_to_process_from_different_dir_by_id(self):
         """Test attach by process id"""
         newdir = self.getBuildArtifact("newdir")
-        try:
-            os.mkdir(newdir)
-        except OSError as e:
-            if e.errno != os.errno.EEXIST:
-                raise
+        os.makedirs(newdir, exist_ok=True)
         testdir = self.getBuildDir()
         exe = os.path.join(newdir, "proc_attach")
         self.buildProgram("main.cpp", exe)
@@ -73,7 +70,8 @@ class ProcessAttachTestCase(TestBase):
         popen = self.spawnSubprocess(exe)
 
         os.chdir(newdir)
-        self.addTearDownHook(lambda: os.chdir(testdir))
+        sourcedir = self.getSourceDir()
+        self.addTearDownHook(lambda: os.chdir(sourcedir))
         self.runCmd("process attach -p " + str(popen.pid))
 
         target = self.dbg.GetSelectedTarget()

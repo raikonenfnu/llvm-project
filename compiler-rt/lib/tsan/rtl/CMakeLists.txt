@@ -22,6 +22,7 @@ append_list_if(COMPILER_RT_HAS_LIBM m TSAN_DYNAMIC_LINK_LIBS)
 append_list_if(COMPILER_RT_HAS_LIBPTHREAD pthread TSAN_DYNAMIC_LINK_LIBS)
 
 set(TSAN_SOURCES
+  tsan_adaptive_delay.cpp
   tsan_debugging.cpp
   tsan_external.cpp
   tsan_fd.cpp
@@ -167,7 +168,7 @@ if(APPLE)
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../go
     COMMENT "Checking TSan Go runtime..."
     VERBATIM)
-  set_target_properties(GotsanRuntimeCheck PROPERTIES FOLDER "Compiler-RT Misc")
+  set_target_properties(GotsanRuntimeCheck PROPERTIES FOLDER "Compiler-RT/Misc")
 else()
   foreach(arch ${TSAN_SUPPORTED_ARCH})
     if(arch STREQUAL "x86_64")
@@ -220,6 +221,10 @@ else()
       set(TSAN_ASM_SOURCES
         tsan_rtl_mips64.S
         )
+    elseif(arch MATCHES "riscv64")
+      set(TSAN_ASM_SOURCES
+        tsan_rtl_riscv64.S
+        )
     elseif(arch MATCHES "s390x")
       set(TSAN_ASM_SOURCES
         tsan_rtl_s390x.S
@@ -255,7 +260,6 @@ else()
       STATIC
       ARCHS ${arch}
       SOURCES ${TSAN_CXX_SOURCES}
-              $<TARGET_OBJECTS:RTUbsan_cxx.${arch}>
       ADDITIONAL_HEADERS ${TSAN_HEADERS}
       CFLAGS ${TSAN_RTL_CFLAGS}
       PARENT_TARGET tsan)

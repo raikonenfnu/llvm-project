@@ -37,7 +37,7 @@ struct WarpMatrixInfo {
 };
 
 /// If `op` is a `vector.transfer_write`, return the `WarpMatrixInfo` for the
-/// vector operand. If op is a `vector.transfer_read`, `vector.contraction`, or
+/// vector operand. If op is a `vector.transfer_read`, `vector.contract`, or
 /// `arith.constant`, return the `WarpMatrixInfo` corresponding to the result.
 /// Otherwise, return failure.
 FailureOr<WarpMatrixInfo> getWarpMatrixInfo(Operation *op);
@@ -92,6 +92,18 @@ FailureOr<LdMatrixParams> getLdMatrixParams(const WarpMatrixInfo &type,
 FailureOr<AffineMap>
 getLaneIdToLdMatrixMatrixCoord(OpBuilder &builder, Location loc,
                                const LdMatrixParams &params);
+
+/// Returns whether the `vector.transfer_read` instruction can be interpreted
+/// as a warp-level cooperative matrix load operation. This function is meant to
+/// be used to establish whether `op` is part of a chain of such warp-level
+/// operations.
+bool canLowerToWarpMatrixOperation(vector::TransferReadOp op);
+
+/// Returns whether the `vector.transfer_write` instruction can be interpreted
+/// as a warp-level cooperative matrix store operation. This function is meant
+/// to be used to establish whether `op` is part of a chain of such warp-level
+/// operations.
+bool canLowerToWarpMatrixOperation(vector::TransferWriteOp op);
 
 } // namespace nvgpu
 } // namespace mlir

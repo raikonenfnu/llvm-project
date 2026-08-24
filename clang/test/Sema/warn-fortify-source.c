@@ -2,8 +2,11 @@
 // RUN: %clang_cc1 -triple x86_64-apple-macosx10.14.0 %s -verify -DUSE_BUILTINS
 // RUN: %clang_cc1 -xc++ -triple x86_64-apple-macosx10.14.0 %s -verify
 // RUN: %clang_cc1 -xc++ -triple x86_64-apple-macosx10.14.0 %s -verify -DUSE_BUILTINS
-// RUN: %clang_cc1 -triple x86_64-apple-macosx10.14.0 -Wno-fortify-source %s -verify=nofortify
-// RUN: %clang_cc1 -xc++ -triple x86_64-apple-macosx10.14.0 -Wno-fortify-source %s -verify=nofortify
+
+// RUN: %clang_cc1 -triple x86_64-apple-macosx10.14.0 %s -verify -fexperimental-new-constant-interpreter
+// RUN: %clang_cc1 -triple x86_64-apple-macosx10.14.0 %s -verify -DUSE_BUILTINS -fexperimental-new-constant-interpreter
+// RUN: %clang_cc1 -xc++ -triple x86_64-apple-macosx10.14.0 %s -verify -fexperimental-new-constant-interpreter
+// RUN: %clang_cc1 -xc++ -triple x86_64-apple-macosx10.14.0 %s -verify -DUSE_BUILTINS -fexperimental-new-constant-interpreter
 
 typedef unsigned long size_t;
 
@@ -18,6 +21,8 @@ extern int sprintf(char *str, const char *format, ...);
 #else
 void *memcpy(void *dst, const void *src, size_t c);
 #endif
+void bcopy(const void *src, void *dst, size_t n);
+void bzero(void *dst, size_t n);
 
 #ifdef __cplusplus
 }
@@ -73,6 +78,22 @@ void call_strcpy_nowarn(void) {
   __builtin_strcpy(dst, src);
 }
 
+void call_strcat(void) {
+  const char *const src = "abcd";
+  char dst1[5];
+  char dst2[4];
+  __builtin_strcat(dst1, src);
+  __builtin_strcat(dst2, src); // expected-warning {{'strcat' will always overflow; destination buffer has size 4, but the source string has length 5 (including NUL byte)}}
+}
+
+void call_stpcpy(void) {
+  const char *const src = "abcd";
+  char dst1[5];
+  char dst2[4];
+  __builtin_stpcpy(dst1, src);
+  __builtin_stpcpy(dst2, src); // expected-warning {{'stpcpy' will always overflow; destination buffer has size 4, but the source string has length 5 (including NUL byte)}}
+}
+
 void call_memmove(void) {
   char s1[10], s2[20];
   __builtin_memmove(s2, s1, 20);
@@ -83,6 +104,16 @@ void call_memset(void) {
   char buf[10];
   __builtin_memset(buf, 0xff, 10);
   __builtin_memset(buf, 0xff, 11); // expected-warning {{'memset' will always overflow; destination buffer has size 10, but size argument is 11}}
+}
+
+void call_bcopy_bzero(void) {
+  char src[20], dst[10];
+  bcopy(src, dst, 20); // expected-warning {{'bcopy' will always overflow; destination buffer has size 10, but size argument is 20}}
+  bzero(dst, 11); // expected-warning {{'bzero' will always overflow; destination buffer has size 10, but size argument is 11}}
+  __builtin_bcopy(src, dst, 10);
+  __builtin_bcopy(src, dst, 20); // expected-warning {{'bcopy' will always overflow; destination buffer has size 10, but size argument is 20}}
+  __builtin_bzero(dst, 10);
+  __builtin_bzero(dst, 11); // expected-warning {{'bzero' will always overflow; destination buffer has size 10, but size argument is 11}}
 }
 
 void call_snprintf(double d, int n) {
@@ -129,11 +160,9 @@ void call_vsnprintf(void) {
 void call_sprintf_chk(char *buf) {
   __builtin___sprintf_chk(buf, 1, 6, "hell\n");
   __builtin___sprintf_chk(buf, 1, 5, "hell\n");     // expected-warning {{'sprintf' will always overflow; destination buffer has size 5, but format string expands to at least 6}}
-  __builtin___sprintf_chk(buf, 1, 6, "hell\0 boy"); // expected-warning {{format string contains '\0' within the string body}} \
-                                                    // nofortify-warning {{format string contains '\0' within the string body}}
+  __builtin___sprintf_chk(buf, 1, 6, "hell\0 boy"); // expected-warning {{format string contains '\0' within the string body}}
   __builtin___sprintf_chk(buf, 1, 2, "hell\0 boy"); // expected-warning {{format string contains '\0' within the string body}} \
-                                                    // nofortify-warning {{format string contains '\0' within the string body}}
-  // expected-warning@-2 {{'sprintf' will always overflow; destination buffer has size 2, but format string expands to at least 5}}
+                                                    // expected-warning {{'sprintf' will always overflow; destination buffer has size 2, but format string expands to at least 5}}
   __builtin___sprintf_chk(buf, 1, 6, "hello");
   __builtin___sprintf_chk(buf, 1, 5, "hello"); // expected-warning {{'sprintf' will always overflow; destination buffer has size 5, but format string expands to at least 6}}
   __builtin___sprintf_chk(buf, 1, 2, "%c", '9');
@@ -182,11 +211,9 @@ void call_sprintf_chk(char *buf) {
 
 void call_sprintf(void) {
   char buf[6];
-  sprintf(buf, "hell\0 boy"); // expected-warning {{format string contains '\0' within the string body}} \
-                              // nofortify-warning {{format string contains '\0' within the string body}}
+  sprintf(buf, "hell\0 boy"); // expected-warning {{format string contains '\0' within the string body}}
   sprintf(buf, "hello b\0y"); // expected-warning {{format string contains '\0' within the string body}} \
-                              // nofortify-warning {{format string contains '\0' within the string body}}
-  // expected-warning@-2 {{'sprintf' will always overflow; destination buffer has size 6, but format string expands to at least 8}}
+                              // expected-warning {{'sprintf' will always overflow; destination buffer has size 6, but format string expands to at least 8}}
   sprintf(buf, "hello");
   sprintf(buf, "hello!"); // expected-warning {{'sprintf' will always overflow; destination buffer has size 6, but format string expands to at least 7}}
   sprintf(buf, "1234%%");

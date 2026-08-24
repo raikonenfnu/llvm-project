@@ -8,11 +8,11 @@ define void @foo(ptr %a, i32 %x) {
 ; CHECK-LABEL: foo:
 ; CHECK:       # %bb.0:
 ; CHECK-NEXT:    rlwinm r5, r3, 3, 27, 28
-; CHECK-NEXT:    li r6, 255
 ; CHECK-NEXT:    extsb r4, r4
+; CHECK-NEXT:    li r6, 255
 ; CHECK-NEXT:    sync
-; CHECK-NEXT:    xori r5, r5, 24
 ; CHECK-NEXT:    rlwinm r3, r3, 0, 0, 29
+; CHECK-NEXT:    xori r5, r5, 24
 ; CHECK-NEXT:    slw r7, r4, r5
 ; CHECK-NEXT:    slw r6, r6, r5
 ; CHECK-NEXT:    and r7, r7, r6
@@ -27,7 +27,7 @@ define void @foo(ptr %a, i32 %x) {
 ; CHECK-NEXT:    andc r8, r8, r6
 ; CHECK-NEXT:    or r8, r7, r8
 ; CHECK-NEXT:    stwcx. r8, 0, r3
-; CHECK-NEXT:    bne cr0, .LBB0_1
+; CHECK-NEXT:    bne- cr0, .LBB0_1
 ; CHECK-NEXT:  .LBB0_3:
 ; CHECK-NEXT:    lwsync
 ; CHECK-NEXT:    blr
@@ -43,7 +43,7 @@ define void @foo(ptr %a, i32 %x) {
 ; PWR8-NEXT:    bgt cr0, .LBB0_3
 ; PWR8-NEXT:  # %bb.2:
 ; PWR8-NEXT:    stbcx. r4, 0, r3
-; PWR8-NEXT:    bne cr0, .LBB0_1
+; PWR8-NEXT:    bne- cr0, .LBB0_1
 ; PWR8-NEXT:  .LBB0_3:
 ; PWR8-NEXT:    lwsync
 ; PWR8-NEXT:    blr

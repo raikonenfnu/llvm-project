@@ -12,24 +12,35 @@
 
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/Analysis/DominanceFrontier.h"
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/IVUsers.h"
+#include "llvm/Analysis/LazyBlockFrequencyInfo.h"
+#include "llvm/Analysis/LazyBranchProbabilityInfo.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryDependenceAnalysis.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
+#include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionAliasAnalysis.h"
+#include "llvm/CodeGen/DroppedVariableStatsMIR.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineOptimizationRemarkEmitter.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/PrintPasses.h"
 
 using namespace llvm;
 using namespace ore;
+
+static cl::opt<bool> DroppedVarStatsMIR(
+    "dropped-variable-stats-mir", cl::Hidden,
+    cl::desc("Dump dropped debug variables stats for MIR passes"),
+    cl::init(false));
 
 Pass *MachineFunctionPass::createPrinterPass(raw_ostream &O,
                                              const std::string &Banner) const {
@@ -88,7 +99,18 @@ bool MachineFunctionPass::runOnFunction(Function &F) {
     MF.print(OS);
   }
 
-  bool RV = runOnMachineFunction(MF);
+  MFProps.reset(ClearedProperties);
+
+  bool RV;
+  if (DroppedVarStatsMIR) {
+    DroppedVariableStatsMIR DroppedVarStatsMF;
+    auto PassName = getPassName();
+    DroppedVarStatsMF.runBeforePass(PassName, &MF);
+    RV = runOnMachineFunction(MF);
+    DroppedVarStatsMF.runAfterPass(PassName, &MF);
+  } else {
+    RV = runOnMachineFunction(MF);
+  }
 
   if (ShouldEmitSizeRemarks) {
     // We wanted size remarks. Check if there was a change to the number of
@@ -114,7 +136,6 @@ bool MachineFunctionPass::runOnFunction(Function &F) {
   }
 
   MFProps.set(SetProperties);
-  MFProps.reset(ClearedProperties);
 
   // For --print-changed, print if the serialized MF has changed. Modes other
   // than quiet/verbose are unimplemented and treated the same as 'quiet'.
@@ -176,6 +197,10 @@ void MachineFunctionPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addPreserved<BasicAAWrapperPass>();
   AU.addPreserved<DominanceFrontierWrapperPass>();
   AU.addPreserved<DominatorTreeWrapperPass>();
+  AU.addPreserved<PostDominatorTreeWrapperPass>();
+  AU.addPreserved<BranchProbabilityInfoWrapperPass>();
+  AU.addPreserved<LazyBranchProbabilityInfoPass>();
+  AU.addPreserved<LazyBlockFrequencyInfoPass>();
   AU.addPreserved<AAResultsWrapperPass>();
   AU.addPreserved<GlobalsAAWrapperPass>();
   AU.addPreserved<IVUsersWrapperPass>();

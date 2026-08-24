@@ -33,7 +33,9 @@ public:
     // byte AArch64 SVE.
     kTypicalRegisterByteSize = 256u,
     // Anything else we'll heap allocate storage for it.
-    kMaxRegisterByteSize = kTypicalRegisterByteSize,
+    // 256x256 to support 256 byte AArch64 SME's array storage (ZA) register.
+    // Which is a square of vector length x vector length.
+    kMaxRegisterByteSize = 256u * 256u,
   };
 
   typedef llvm::SmallVector<uint8_t, kTypicalRegisterByteSize> BytesContainer;
@@ -44,7 +46,8 @@ public:
     eTypeUInt16,
     eTypeUInt32,
     eTypeUInt64,
-    eTypeUInt128,
+    eTypeUIntN, /// < This value is used when the (integer) register is larger
+                /// than 64-bits.
     eTypeFloat,
     eTypeDouble,
     eTypeLongDouble,
@@ -67,7 +70,7 @@ public:
     m_scalar = inst;
   }
 
-  explicit RegisterValue(llvm::APInt inst) : m_type(eTypeUInt128) {
+  explicit RegisterValue(llvm::APInt inst) : m_type(eTypeUIntN) {
     m_scalar = llvm::APInt(std::move(inst));
   }
 
@@ -176,7 +179,7 @@ public:
   }
 
   void operator=(llvm::APInt uint) {
-    m_type = eTypeUInt128;
+    m_type = eTypeUIntN;
     m_scalar = llvm::APInt(std::move(uint));
   }
 
@@ -215,8 +218,8 @@ public:
     m_scalar = uint;
   }
 
-  void SetUInt128(llvm::APInt uint) {
-    m_type = eTypeUInt128;
+  void SetUIntN(llvm::APInt uint) {
+    m_type = eTypeUIntN;
     m_scalar = std::move(uint);
   }
 

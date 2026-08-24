@@ -9,8 +9,9 @@
 #include "llvm/Object/DXContainer.h"
 #include "llvm/BinaryFormat/DXContainer.h"
 #include "llvm/Object/Error.h"
-#include "llvm/Support/Alignment.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "llvm/TargetParser/SubtargetFeature.h"
 
 using namespace llvm;
 using namespace llvm::object;
@@ -19,10 +20,14 @@ static Error parseFailed(const Twine &Msg) {
   return make_error<GenericBinaryError>(Msg.str(), object_error::parse_failed);
 }
 
+static bool readIsOutOfBounds(StringRef Buffer, const char *Src, size_t Size) {
+  return Src < Buffer.begin() || Src + Size > Buffer.end();
+}
+
 template <typename T>
 static Error readStruct(StringRef Buffer, const char *Src, T &Struct) {
   // Don't read before the beginning or past the end of the file
-  if (Src < Buffer.begin() || Src + sizeof(T) > Buffer.end())
+  if (readIsOutOfBounds(Buffer, Src, sizeof(T)))
     return parseFailed("Reading structure out of file bounds");
 
   memcpy(&Struct, Src, sizeof(T));
@@ -38,7 +43,7 @@ static Error readInteger(StringRef Buffer, const char *Src, T &Val,
   static_assert(std::is_integral_v<T>,
                 "Cannot call readInteger on non-integral type.");
   // Don't read before the beginning or past the end of the file
-  if (Src < Buffer.begin() || Src + sizeof(T) > Buffer.end())
+  if (readIsOutOfBounds(Buffer, Src, sizeof(T)))
     return parseFailed(Twine("Reading ") + Str + " out of file bounds");
 
   // The DXContainer offset table is comprised of uint32_t values but not padded
@@ -54,15 +59,42 @@ static Error readInteger(StringRef Buffer, const char *Src, T &Val,
   return Error::success();
 }
 
+/// Read a null-terminated string at the position Src from Buffer, with maximum
+/// byte size of MaxSize (including the null-terminator). Advance Src by the
+/// number of bytes read.
+static Error readString(StringRef Buffer, const char *&Src, size_t MaxSize,
+                        StringRef &Val, Twine Desc) {
+  if (readIsOutOfBounds(Buffer, Src, MaxSize))
+    return parseFailed(Desc + " is out of file bounds");
+
+  // Ensure that the null-terminator is somewhere within MaxSize bytes.
+  Buffer = Buffer.substr(Src - Buffer.data(), MaxSize);
+  size_t Length = Buffer.find('\0');
+  if (Length == Buffer.npos)
+    return parseFailed(Desc + " does not end with null-terminator");
+
+  Val = StringRef(Buffer.data(), Length);
+  Src += Length + 1;
+  return Error::success();
+}
+
 DXContainer::DXContainer(MemoryBufferRef O) : Data(O) {}
 
 Error DXContainer::parseHeader() {
-  return readStruct(Data.getBuffer(), Data.getBuffer().data(), Header);
+  if (Error Err = readStruct(Data.getBuffer(), Data.getBuffer().data(), Header))
+    return Err;
+  if (StringRef(reinterpret_cast<char *>(Header.Magic), 4) != "DXBC")
+    return parseFailed("Missing DXBC header magic");
+  return Error::success();
 }
 
-Error DXContainer::parseDXILHeader(StringRef Part) {
+Error DXContainer::parseDXILHeader(dxbc::PartType PT, StringRef Part) {
+  bool IsDebug = dxbc::isDebugProgramPart(PT);
+  std::optional<DXILData> &DXIL = IsDebug ? this->DebugDXIL : this->DXIL;
+
   if (DXIL)
-    return parseFailed("More than one DXIL part is present in the file");
+    return parseFailed(formatv("more than one {0} part is present in the file",
+                               dxbc::getProgramPartName(IsDebug)));
   const char *Current = Part.begin();
   dxbc::ProgramHeader Header;
   if (Error Err = readStruct(Part, Current, Header))
@@ -72,13 +104,33 @@ Error DXContainer::parseDXILHeader(StringRef Part) {
   return Error::success();
 }
 
-Error DXContainer::parseShaderFlags(StringRef Part) {
-  if (ShaderFlags)
+Error DXContainer::parseDebugName(StringRef Part) {
+  if (DebugName)
+    return parseFailed("more than one ILDN part is present in the file");
+  const char *Current = Part.begin();
+  dxbc::DebugNameHeader Header;
+  if (Error Err = readStruct(Part, Current, Header))
+    return Err;
+  Current += sizeof(Header);
+
+  StringRef Name;
+  if (Error Err = readString(Part, Current, Header.NameLength + 1, Name,
+                             "debug file name"))
+    return Err;
+  if (Name.size() != Header.NameLength)
+    return parseFailed("debug file name length mismatch");
+  DebugName.emplace(Header, Name.data());
+
+  return Error::success();
+}
+
+Error DXContainer::parseShaderFeatureFlags(StringRef Part) {
+  if (ShaderFeatureFlags)
     return parseFailed("More than one SFI0 part is present in the file");
   uint64_t FlagValue = 0;
   if (Error Err = readInteger(Part, Part.begin(), FlagValue))
     return Err;
-  ShaderFlags = FlagValue;
+  ShaderFeatureFlags = FlagValue;
   return Error::success();
 }
 
@@ -92,12 +144,76 @@ Error DXContainer::parseHash(StringRef Part) {
   return Error::success();
 }
 
+Error DXContainer::parseRootSignature(StringRef Part) {
+  if (RootSignature)
+    return parseFailed("More than one RTS0 part is present in the file");
+  RootSignature = DirectX::RootSignature(Part);
+  if (Error Err = RootSignature->parse())
+    return Err;
+  return Error::success();
+}
+
 Error DXContainer::parsePSVInfo(StringRef Part) {
   if (PSVInfo)
     return parseFailed("More than one PSV0 part is present in the file");
   PSVInfo = DirectX::PSVRuntimeInfo(Part);
   // Parsing the PSVRuntime info occurs late because we need to read data from
   // other parts first.
+  return Error::success();
+}
+
+Error DirectX::Signature::initialize(StringRef Part) {
+  dxbc::ProgramSignatureHeader SigHeader;
+  if (Error Err = readStruct(Part, Part.begin(), SigHeader))
+    return Err;
+  size_t Size = sizeof(dxbc::ProgramSignatureElement) * SigHeader.ParamCount;
+
+  if (Part.size() < Size + SigHeader.FirstParamOffset)
+    return parseFailed("Signature parameters extend beyond the part boundary");
+
+  Parameters.Data = Part.substr(SigHeader.FirstParamOffset, Size);
+
+  StringTableOffset = SigHeader.FirstParamOffset + static_cast<uint32_t>(Size);
+  StringTable = Part.substr(SigHeader.FirstParamOffset + Size);
+
+  for (const auto &Param : Parameters) {
+    if (Param.NameOffset < StringTableOffset)
+      return parseFailed("Invalid parameter name offset: name starts before "
+                         "the first name offset");
+    if (Param.NameOffset - StringTableOffset > StringTable.size())
+      return parseFailed("Invalid parameter name offset: name starts after the "
+                         "end of the part data");
+  }
+  return Error::success();
+}
+
+Error DXContainer::parseCompilerVersionInfo(StringRef Part) {
+  if (VersionInfo)
+    return parseFailed("more than one VERS part is present in the file");
+  const char *Current = Part.begin();
+  dxbc::CompilerVersionHeader Header;
+  if (Error Err = readStruct(Part, Current, Header))
+    return Err;
+  Current += sizeof(Header);
+
+  if (!dxbc::isValidCompilerVersionFlags(to_underlying(Header.Flags)))
+    return parseFailed("Incorrect shader compiler version flags combination");
+
+  StringRef CommitSha;
+  const char *Prev = Current;
+  if (Error Err = readString(Part, Current, Header.ContentSizeInBytes,
+                             CommitSha, "CommitSha"))
+    return Err;
+  StringRef CustomVersionString;
+  if (Error Err = readString(Part, Current,
+                             Header.ContentSizeInBytes - (Current - Prev),
+                             CustomVersionString, "CustomVersionString"))
+    return Err;
+
+  VersionInfo.emplace();
+  VersionInfo->Parameters = Header;
+  VersionInfo->CommitSha = CommitSha;
+  VersionInfo->CustomVersionString = CustomVersionString;
   return Error::success();
 }
 
@@ -139,11 +255,16 @@ Error DXContainer::parsePartOffsets() {
     LastOffset = PartOffset + PartSize;
     switch (PT) {
     case dxbc::PartType::DXIL:
-      if (Error Err = parseDXILHeader(PartData))
+    case dxbc::PartType::ILDB:
+      if (Error Err = parseDXILHeader(PT, PartData))
+        return Err;
+      break;
+    case dxbc::PartType::ILDN:
+      if (Error Err = parseDebugName(PartData))
         return Err;
       break;
     case dxbc::PartType::SFI0:
-      if (Error Err = parseShaderFlags(PartData))
+      if (Error Err = parseShaderFeatureFlags(PartData))
         return Err;
       break;
     case dxbc::PartType::HASH:
@@ -154,18 +275,44 @@ Error DXContainer::parsePartOffsets() {
       if (Error Err = parsePSVInfo(PartData))
         return Err;
       break;
+    case dxbc::PartType::ISG1:
+      if (Error Err = InputSignature.initialize(PartData))
+        return Err;
+      break;
+    case dxbc::PartType::OSG1:
+      if (Error Err = OutputSignature.initialize(PartData))
+        return Err;
+      break;
+    case dxbc::PartType::PSG1:
+      if (Error Err = PatchConstantSignature.initialize(PartData))
+        return Err;
+      break;
     case dxbc::PartType::Unknown:
+      break;
+    case dxbc::PartType::RTS0:
+      if (Error Err = parseRootSignature(PartData))
+        return Err;
+      break;
+    case dxbc::PartType::VERS:
+      if (Error Err = parseCompilerVersionInfo(PartData))
+        return Err;
       break;
     }
   }
 
+  if (DXIL && DebugDXIL &&
+      DXIL->first.ShaderKind != DebugDXIL->first.ShaderKind)
+    return parseFailed(
+        "ILDB part shader kind does not match DXIL part shader kind");
+
   // Fully parsing the PSVInfo requires knowing the shader kind which we read
   // out of the program header in the DXIL part.
   if (PSVInfo) {
-    if (!DXIL)
-      return parseFailed("Cannot fully parse pipeline state validation "
-                         "information without DXIL part.");
-    if (Error Err = PSVInfo->parse(DXIL->first.ShaderKind))
+    std::optional<uint16_t> ShaderKind = getShaderKind();
+    if (!ShaderKind)
+      return parseFailed("cannot fully parse pipeline state validation "
+                         "information without DXIL or ILDB part");
+    if (Error Err = PSVInfo->parse(*ShaderKind))
       return Err;
   }
   return Error::success();
@@ -191,6 +338,51 @@ void DXContainer::PartIterator::updateIteratorImpl(const uint32_t Offset) {
   IteratorState.Offset = Offset;
 }
 
+Error DirectX::RootSignature::parse() {
+  const char *Current = PartData.begin();
+
+  // Root Signature headers expects 6 integers to be present.
+  if (PartData.size() < 6 * sizeof(uint32_t))
+    return parseFailed(
+        "Invalid root signature, insufficient space for header.");
+
+  Version = support::endian::read<uint32_t, llvm::endianness::little>(Current);
+  Current += sizeof(uint32_t);
+
+  NumParameters =
+      support::endian::read<uint32_t, llvm::endianness::little>(Current);
+  Current += sizeof(uint32_t);
+
+  RootParametersOffset =
+      support::endian::read<uint32_t, llvm::endianness::little>(Current);
+  Current += sizeof(uint32_t);
+
+  NumStaticSamplers =
+      support::endian::read<uint32_t, llvm::endianness::little>(Current);
+  Current += sizeof(uint32_t);
+
+  StaticSamplersOffset =
+      support::endian::read<uint32_t, llvm::endianness::little>(Current);
+  Current += sizeof(uint32_t);
+
+  Flags = support::endian::read<uint32_t, llvm::endianness::little>(Current);
+  Current += sizeof(uint32_t);
+
+  ParametersHeaders.Data = PartData.substr(
+      RootParametersOffset,
+      NumParameters * sizeof(dxbc::RTS0::v1::RootParameterHeader));
+
+  StaticSamplers.Stride = (Version <= 2)
+                              ? sizeof(dxbc::RTS0::v1::StaticSampler)
+                              : sizeof(dxbc::RTS0::v3::StaticSampler);
+
+  StaticSamplers.Data = PartData.substr(StaticSamplersOffset,
+                                        static_cast<size_t>(NumStaticSamplers) *
+                                            StaticSamplers.Stride);
+
+  return Error::success();
+}
+
 Error DirectX::PSVRuntimeInfo::parse(uint16_t ShaderKind) {
   Triple::EnvironmentType ShaderStage = dxbc::getShaderStage(ShaderKind);
 
@@ -210,7 +402,14 @@ Error DirectX::PSVRuntimeInfo::parse(uint16_t ShaderKind) {
   const uint32_t PSVVersion = getVersion();
 
   // Detect the PSVVersion by looking at the size field.
-  if (PSVVersion == 2) {
+  if (PSVVersion == 3) {
+    v3::RuntimeInfo Info;
+    if (Error Err = readStruct(PSVInfoData, Current, Info))
+      return Err;
+    if (sys::IsBigEndianHost)
+      Info.swapBytes(ShaderStage);
+    BasicInfo = Info;
+  } else if (PSVVersion == 2) {
     v2::RuntimeInfo Info;
     if (Error Err = readStruct(PSVInfoData, Current, Info))
       return Err;
@@ -264,7 +463,7 @@ Error DirectX::PSVRuntimeInfo::parse(uint16_t ShaderKind) {
 
   // String table starts at a 4-byte offset.
   Current = reinterpret_cast<const char *>(
-      alignTo<4>(reinterpret_cast<const uintptr_t>(Current)));
+      alignTo<4>(reinterpret_cast<uintptr_t>(Current)));
 
   uint32_t StringTableSize = 0;
   if (Error Err = readInteger(Data, Current, StringTableSize))
@@ -304,7 +503,8 @@ Error DirectX::PSVRuntimeInfo::parse(uint16_t ShaderKind) {
     SigOutputElements.Stride = SigPatchOrPrimElements.Stride =
         SigInputElements.Stride;
 
-    if (Data.end() - Current < ElementCount * SigInputElements.Stride)
+    if (Data.end() - Current <
+        (ptrdiff_t)(ElementCount * SigInputElements.Stride))
       return parseFailed(
           "Signature elements extend beyond the size of the part");
 
@@ -321,10 +521,74 @@ Error DirectX::PSVRuntimeInfo::parse(uint16_t ShaderKind) {
     Current += PSize;
   }
 
+  ArrayRef<uint8_t> OutputVectorCounts = getOutputVectorCounts();
+  uint8_t PatchConstOrPrimVectorCount = getPatchConstOrPrimVectorCount();
+  uint8_t InputVectorCount = getInputVectorCount();
+
+  auto maskDwordSize = [](uint8_t Vector) {
+    return (static_cast<uint32_t>(Vector) + 7) >> 3;
+  };
+
+  auto mapTableSize = [maskDwordSize](uint8_t X, uint8_t Y) {
+    return maskDwordSize(Y) * X * 4;
+  };
+
+  if (usesViewID()) {
+    for (uint32_t I = 0; I < OutputVectorCounts.size(); ++I) {
+      // The vector mask is one bit per component and 4 components per vector.
+      // We can compute the number of dwords required by rounding up to the next
+      // multiple of 8.
+      uint32_t NumDwords =
+          maskDwordSize(static_cast<uint32_t>(OutputVectorCounts[I]));
+      size_t NumBytes = NumDwords * sizeof(uint32_t);
+      OutputVectorMasks[I].Data = Data.substr(Current - Data.begin(), NumBytes);
+      Current += NumBytes;
+    }
+
+    if (ShaderStage == Triple::Hull && PatchConstOrPrimVectorCount > 0) {
+      uint32_t NumDwords = maskDwordSize(PatchConstOrPrimVectorCount);
+      size_t NumBytes = NumDwords * sizeof(uint32_t);
+      PatchOrPrimMasks.Data = Data.substr(Current - Data.begin(), NumBytes);
+      Current += NumBytes;
+    }
+  }
+
+  // Input/Output mapping table
+  for (uint32_t I = 0; I < OutputVectorCounts.size(); ++I) {
+    if (InputVectorCount == 0 || OutputVectorCounts[I] == 0)
+      continue;
+    uint32_t NumDwords = mapTableSize(InputVectorCount, OutputVectorCounts[I]);
+    size_t NumBytes = NumDwords * sizeof(uint32_t);
+    InputOutputMap[I].Data = Data.substr(Current - Data.begin(), NumBytes);
+    Current += NumBytes;
+  }
+
+  // Hull shader: Input/Patch mapping table
+  if (ShaderStage == Triple::Hull && PatchConstOrPrimVectorCount > 0 &&
+      InputVectorCount > 0) {
+    uint32_t NumDwords =
+        mapTableSize(InputVectorCount, PatchConstOrPrimVectorCount);
+    size_t NumBytes = NumDwords * sizeof(uint32_t);
+    InputPatchMap.Data = Data.substr(Current - Data.begin(), NumBytes);
+    Current += NumBytes;
+  }
+
+  // Domain Shader: Patch/Output mapping table
+  if (ShaderStage == Triple::Domain && PatchConstOrPrimVectorCount > 0 &&
+      OutputVectorCounts[0] > 0) {
+    uint32_t NumDwords =
+        mapTableSize(PatchConstOrPrimVectorCount, OutputVectorCounts[0]);
+    size_t NumBytes = NumDwords * sizeof(uint32_t);
+    PatchOutputMap.Data = Data.substr(Current - Data.begin(), NumBytes);
+    Current += NumBytes;
+  }
+
   return Error::success();
 }
 
 uint8_t DirectX::PSVRuntimeInfo::getSigInputCount() const {
+  if (const auto *P = std::get_if<dxbc::PSV::v3::RuntimeInfo>(&BasicInfo))
+    return P->SigInputElements;
   if (const auto *P = std::get_if<dxbc::PSV::v2::RuntimeInfo>(&BasicInfo))
     return P->SigInputElements;
   if (const auto *P = std::get_if<dxbc::PSV::v1::RuntimeInfo>(&BasicInfo))
@@ -333,6 +597,8 @@ uint8_t DirectX::PSVRuntimeInfo::getSigInputCount() const {
 }
 
 uint8_t DirectX::PSVRuntimeInfo::getSigOutputCount() const {
+  if (const auto *P = std::get_if<dxbc::PSV::v3::RuntimeInfo>(&BasicInfo))
+    return P->SigOutputElements;
   if (const auto *P = std::get_if<dxbc::PSV::v2::RuntimeInfo>(&BasicInfo))
     return P->SigOutputElements;
   if (const auto *P = std::get_if<dxbc::PSV::v1::RuntimeInfo>(&BasicInfo))
@@ -341,9 +607,191 @@ uint8_t DirectX::PSVRuntimeInfo::getSigOutputCount() const {
 }
 
 uint8_t DirectX::PSVRuntimeInfo::getSigPatchOrPrimCount() const {
+  if (const auto *P = std::get_if<dxbc::PSV::v3::RuntimeInfo>(&BasicInfo))
+    return P->SigPatchOrPrimElements;
   if (const auto *P = std::get_if<dxbc::PSV::v2::RuntimeInfo>(&BasicInfo))
     return P->SigPatchOrPrimElements;
   if (const auto *P = std::get_if<dxbc::PSV::v1::RuntimeInfo>(&BasicInfo))
     return P->SigPatchOrPrimElements;
   return 0;
+}
+
+class DXNotSupportedError : public ErrorInfo<DXNotSupportedError> {
+public:
+  static char ID;
+
+  DXNotSupportedError(StringRef S) : FeatureString(S) {}
+
+  void log(raw_ostream &OS) const override {
+    OS << "DXContainer does not support " << FeatureString;
+  }
+
+  std::error_code convertToErrorCode() const override {
+    return inconvertibleErrorCode();
+  }
+
+private:
+  StringRef FeatureString;
+};
+
+char DXNotSupportedError::ID = 0;
+
+Expected<section_iterator>
+DXContainerObjectFile::getSymbolSection(DataRefImpl Symb) const {
+  return make_error<DXNotSupportedError>("Symbol sections");
+}
+
+Expected<StringRef> DXContainerObjectFile::getSymbolName(DataRefImpl) const {
+  return make_error<DXNotSupportedError>("Symbol names");
+}
+
+Expected<uint64_t>
+DXContainerObjectFile::getSymbolAddress(DataRefImpl Symb) const {
+  return make_error<DXNotSupportedError>("Symbol addresses");
+}
+
+uint64_t DXContainerObjectFile::getSymbolValueImpl(DataRefImpl Symb) const {
+  llvm_unreachable("DXContainer does not support symbols");
+}
+uint64_t
+DXContainerObjectFile::getCommonSymbolSizeImpl(DataRefImpl Symb) const {
+  llvm_unreachable("DXContainer does not support symbols");
+}
+
+Expected<SymbolRef::Type>
+DXContainerObjectFile::getSymbolType(DataRefImpl Symb) const {
+  return make_error<DXNotSupportedError>("Symbol types");
+}
+
+void DXContainerObjectFile::moveSectionNext(DataRefImpl &Sec) const {
+  PartIterator It = reinterpret_cast<PartIterator>(Sec.p);
+  if (It == Parts.end())
+    return;
+
+  ++It;
+  Sec.p = reinterpret_cast<uintptr_t>(It);
+}
+
+Expected<StringRef>
+DXContainerObjectFile::getSectionName(DataRefImpl Sec) const {
+  PartIterator It = reinterpret_cast<PartIterator>(Sec.p);
+  return StringRef(It->Part.getName());
+}
+
+uint64_t DXContainerObjectFile::getSectionAddress(DataRefImpl Sec) const {
+  PartIterator It = reinterpret_cast<PartIterator>(Sec.p);
+  return It->Offset;
+}
+
+uint64_t DXContainerObjectFile::getSectionIndex(DataRefImpl Sec) const {
+  return (Sec.p - reinterpret_cast<uintptr_t>(Parts.begin())) /
+         sizeof(PartIterator);
+}
+
+uint64_t DXContainerObjectFile::getSectionSize(DataRefImpl Sec) const {
+  PartIterator It = reinterpret_cast<PartIterator>(Sec.p);
+  return It->Data.size();
+}
+Expected<ArrayRef<uint8_t>>
+DXContainerObjectFile::getSectionContents(DataRefImpl Sec) const {
+  PartIterator It = reinterpret_cast<PartIterator>(Sec.p);
+  return ArrayRef<uint8_t>(It->Data.bytes_begin(), It->Data.size());
+}
+
+uint64_t DXContainerObjectFile::getSectionAlignment(DataRefImpl Sec) const {
+  return 1;
+}
+
+bool DXContainerObjectFile::isSectionCompressed(DataRefImpl Sec) const {
+  return false;
+}
+
+bool DXContainerObjectFile::isSectionText(DataRefImpl Sec) const {
+  return false;
+}
+
+bool DXContainerObjectFile::isSectionData(DataRefImpl Sec) const {
+  return false;
+}
+
+bool DXContainerObjectFile::isSectionBSS(DataRefImpl Sec) const {
+  return false;
+}
+
+bool DXContainerObjectFile::isSectionVirtual(DataRefImpl Sec) const {
+  return false;
+}
+
+relocation_iterator
+DXContainerObjectFile::section_rel_begin(DataRefImpl Sec) const {
+  return relocation_iterator(RelocationRef());
+}
+
+relocation_iterator
+DXContainerObjectFile::section_rel_end(DataRefImpl Sec) const {
+  return relocation_iterator(RelocationRef());
+}
+
+void DXContainerObjectFile::moveRelocationNext(DataRefImpl &Rel) const {
+  llvm_unreachable("DXContainer does not support relocations");
+}
+
+uint64_t DXContainerObjectFile::getRelocationOffset(DataRefImpl Rel) const {
+  llvm_unreachable("DXContainer does not support relocations");
+}
+
+symbol_iterator
+DXContainerObjectFile::getRelocationSymbol(DataRefImpl Rel) const {
+  return symbol_iterator(SymbolRef());
+}
+
+uint64_t DXContainerObjectFile::getRelocationType(DataRefImpl Rel) const {
+  llvm_unreachable("DXContainer does not support relocations");
+}
+
+void DXContainerObjectFile::getRelocationTypeName(
+    DataRefImpl Rel, SmallVectorImpl<char> &Result) const {
+  llvm_unreachable("DXContainer does not support relocations");
+}
+
+section_iterator DXContainerObjectFile::section_begin() const {
+  DataRefImpl Sec;
+  Sec.p = reinterpret_cast<uintptr_t>(Parts.begin());
+  return section_iterator(SectionRef(Sec, this));
+}
+section_iterator DXContainerObjectFile::section_end() const {
+  DataRefImpl Sec;
+  Sec.p = reinterpret_cast<uintptr_t>(Parts.end());
+  return section_iterator(SectionRef(Sec, this));
+}
+
+uint8_t DXContainerObjectFile::getBytesInAddress() const { return 4; }
+
+StringRef DXContainerObjectFile::getFileFormatName() const {
+  return "DirectX Container";
+}
+
+Triple::ArchType DXContainerObjectFile::getArch() const { return Triple::dxil; }
+
+Expected<SubtargetFeatures> DXContainerObjectFile::getFeatures() const {
+  return SubtargetFeatures();
+}
+
+Error DXContainerObjectFile::printSymbolName(raw_ostream &OS,
+                                             DataRefImpl Symb) const {
+  return make_error<DXNotSupportedError>("Symbol names");
+}
+
+Expected<uint32_t>
+DXContainerObjectFile::getSymbolFlags(DataRefImpl Symb) const {
+  return make_error<DXNotSupportedError>("Symbol flags");
+}
+
+Expected<std::unique_ptr<DXContainerObjectFile>>
+ObjectFile::createDXContainerObjectFile(MemoryBufferRef Object) {
+  auto ExC = DXContainer::create(Object);
+  if (!ExC)
+    return ExC.takeError();
+  std::unique_ptr<DXContainerObjectFile> Obj(new DXContainerObjectFile(*ExC));
+  return std::move(Obj);
 }

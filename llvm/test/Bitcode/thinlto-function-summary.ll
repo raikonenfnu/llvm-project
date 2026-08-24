@@ -3,6 +3,7 @@
 
 ; BC: <SOURCE_FILENAME
 ; "h"
+; BC-NEXT: <GUIDLIST
 ; BC-NEXT: <GLOBALVAR {{.*}} op0=0 op1=1
 ; "foo"
 ; BC-NEXT: <FUNCTION op0=1 op1=3
@@ -13,20 +14,20 @@
 ; "variadic"
 ; BC-NEXT: <FUNCTION op0=46 op1=8
 ; "llvm.va_start"
-; BC-NEXT: <FUNCTION op0=54 op1=13
+; BC-NEXT: <FUNCTION op0=54 op1=16
 ; "f"
-; BC-NEXT: <ALIAS op0=67 op1=1
+; BC-NEXT: <ALIAS op0=70 op1=1
 ; BC: <GLOBALVAL_SUMMARY_BLOCK
 ; BC-NEXT: <VERSION
 ; BC-NEXT: <FLAGS
-; BC-NEXT: <PERMODULE {{.*}} op0=1 op1=0
-; BC-NEXT: <PERMODULE {{.*}} op0=2 op1=0
-; BC-NEXT: <PERMODULE {{.*}} op0=3 op1=7
-; BC-NEXT: <PERMODULE {{.*}} op0=4 op1=0 op2=4 op3=0
+; BC-NEXT: <PERMODULE_PROFILE {{.*}} op0=1 op1=0
+; BC-NEXT: <PERMODULE_PROFILE {{.*}} op0=2 op1=0
+; BC-NEXT: <PERMODULE_PROFILE {{.*}} op0=3 op1=7
+; BC-NEXT: <PERMODULE_PROFILE {{.*}} op0=4 op1=0 op2=4 op3=0
 ; BC-NEXT: <ALIAS {{.*}} op0=6 op1=0 op2=3
 ; BC-NEXT: </GLOBALVAL_SUMMARY_BLOCK
 ; BC: <STRTAB_BLOCK
-; BC-NEXT: blob data = 'hfoobaranon.{{................................}}.0variadicllvm.va_startf{{.*}}'
+; BC-NEXT: blob data = 'hfoobaranon.{{................................}}.0variadicllvm.va_start.p{{[0-9]+}}f{{.*}}'
 
 
 ; RUN: opt -passes=name-anon-globals -module-summary < %s | llvm-dis | FileCheck %s

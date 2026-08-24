@@ -24,15 +24,15 @@
 #define _LIBUNWIND_FRAMEHEADERCACHE_TRACE(msg, ...)
 #endif
 
-// This cache should only be be used from within a dl_iterate_phdr callback.
+// This cache should only be used from within a dl_iterate_phdr callback.
 // dl_iterate_phdr does the necessary synchronization to prevent problems
 // with concurrent access via the libc load lock. Adding synchronization
 // for other uses is possible, but not currently done.
 
 class _LIBUNWIND_HIDDEN FrameHeaderCache {
   struct CacheEntry {
-    uintptr_t LowPC() { return Info.dso_base; };
-    uintptr_t HighPC() { return Info.dso_base + Info.text_segment_length; };
+    uintptr_t LowPC() { return Info.dso_base; }
+    uintptr_t HighPC() { return Info.dso_base + Info.text_segment_length; }
     UnwindInfoSections Info;
     CacheEntry *Next;
   };

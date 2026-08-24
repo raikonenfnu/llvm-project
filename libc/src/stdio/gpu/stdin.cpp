@@ -6,11 +6,17 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <stdio.h>
+#include "src/stdio/stdin.h"
 
-namespace __llvm_libc {
+#include "hdr/types/FILE.h"
+#include "src/__support/common.h"
+#include "src/__support/macros/config.h"
+
+namespace LIBC_NAMESPACE_DECL {
+
 static struct {
 } stub;
-FILE *stdin = reinterpret_cast<FILE *>(&stub);
-} // namespace __llvm_libc
-extern "C" FILE *stdin = reinterpret_cast<FILE *>(&__llvm_libc::stub);
+
+LLVM_LIBC_VARIABLE(FILE *, stdin) = reinterpret_cast<FILE *>(&stub);
+
+} // namespace LIBC_NAMESPACE_DECL

@@ -6,22 +6,27 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_LIBC_SUPPORT_MACROS_PROPERTIES_ARCHITECTURES_H
-#define LLVM_LIBC_SUPPORT_MACROS_PROPERTIES_ARCHITECTURES_H
+#ifndef LLVM_LIBC_SRC___SUPPORT_MACROS_PROPERTIES_ARCHITECTURES_H
+#define LLVM_LIBC_SRC___SUPPORT_MACROS_PROPERTIES_ARCHITECTURES_H
 
 #if defined(__AMDGPU__)
 #define LIBC_TARGET_ARCH_IS_AMDGPU
+#endif
+
+#if defined(__SPIRV__)
+#define LIBC_TARGET_ARCH_IS_SPIRV
 #endif
 
 #if defined(__NVPTX__)
 #define LIBC_TARGET_ARCH_IS_NVPTX
 #endif
 
-#if defined(LIBC_TARGET_ARCH_IS_NVPTX) || defined(LIBC_TARGET_ARCH_IS_AMDGPU)
+#if defined(LIBC_TARGET_ARCH_IS_NVPTX) ||                                      \
+    defined(LIBC_TARGET_ARCH_IS_AMDGPU) || defined(LIBC_TARGET_ARCH_IS_SPIRV)
 #define LIBC_TARGET_ARCH_IS_GPU
 #endif
 
-#if defined(__pnacl__) || defined(__CLR_VER) || defined(LIBC_TARGET_ARCH_IS_GPU)
+#if defined(__CLR_VER) || defined(LIBC_TARGET_ARCH_IS_GPU)
 #define LIBC_TARGET_ARCH_IS_VM
 #endif
 
@@ -41,11 +46,15 @@
 #define LIBC_TARGET_ARCH_IS_ARM
 #endif
 
+#if defined(__wasm__)
+#define LIBC_TARGET_ARCH_IS_WASM
+#endif
+
 #if defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
 #define LIBC_TARGET_ARCH_IS_AARCH64
 #endif
 
-#if (defined(LIBC_TARGET_ARCH_IS_AARCH64) || defined(LIBC_TARGET_ARCH_IS_ARM))
+#if defined(LIBC_TARGET_ARCH_IS_AARCH64) || defined(LIBC_TARGET_ARCH_IS_ARM)
 #define LIBC_TARGET_ARCH_IS_ANY_ARM
 #endif
 
@@ -57,9 +66,8 @@
 #define LIBC_TARGET_ARCH_IS_RISCV32
 #endif
 
-#if (defined(LIBC_TARGET_ARCH_IS_RISCV64) ||                                   \
-     defined(LIBC_TARGET_ARCH_IS_RISCV32))
+#if defined(LIBC_TARGET_ARCH_IS_RISCV64) || defined(LIBC_TARGET_ARCH_IS_RISCV32)
 #define LIBC_TARGET_ARCH_IS_ANY_RISCV
 #endif
 
-#endif // LLVM_LIBC_SUPPORT_MACROS_PROPERTIES_ARCHITECTURES_H
+#endif // LLVM_LIBC_SRC___SUPPORT_MACROS_PROPERTIES_ARCHITECTURES_H

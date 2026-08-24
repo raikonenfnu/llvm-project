@@ -49,7 +49,6 @@ namespace clang {
 namespace clangd {
 namespace {
 
-using ::testing::_;
 using ::testing::AllOf;
 using ::testing::AnyOf;
 using ::testing::Contains;
@@ -114,7 +113,7 @@ protected:
   void updateWithCallback(TUScheduler &S, PathRef File, ParseInputs Inputs,
                           WantDiagnostics WD,
                           llvm::unique_function<void()> CB) {
-    WithContextValue Ctx(llvm::make_scope_exit(std::move(CB)));
+    WithContextValue Ctx(llvm::scope_exit(std::move(CB)));
     S.update(File, Inputs, WD);
   }
 

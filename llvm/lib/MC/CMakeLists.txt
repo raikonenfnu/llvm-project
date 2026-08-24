@@ -1,7 +1,10 @@
 add_llvm_component_library(LLVMMC
   ConstantPools.cpp
+  DXContainerInfo.cpp
   DXContainerPSVInfo.cpp
+  DXContainerRootSignature.cpp
   ELFObjectWriter.cpp
+  GOFFObjectWriter.cpp
   MCAsmBackend.cpp
   MCAsmInfo.cpp
   MCAsmInfoCOFF.cpp
@@ -23,11 +26,14 @@ add_llvm_component_library(LLVMMC
   MCELFStreamer.cpp
   MCExpr.cpp
   MCFragment.cpp
+  MCGOFFStreamer.cpp
   MCInst.cpp
   MCInstPrinter.cpp
   MCInstrAnalysis.cpp
   MCInstrDesc.cpp
   MCInstrInfo.cpp
+  MCLFI.cpp
+  MCLFIRewriter.cpp
   MCLabel.cpp
   MCLinkerOptimizationHint.cpp
   MCMachOStreamer.cpp
@@ -40,17 +46,14 @@ add_llvm_component_library(LLVMMC
   MCRegisterInfo.cpp
   MCSchedule.cpp
   MCSection.cpp
-  MCSectionCOFF.cpp
-  MCSectionDXContainer.cpp
-  MCSectionELF.cpp
   MCSectionMachO.cpp
-  MCSectionWasm.cpp
-  MCSectionXCOFF.cpp
   MCStreamer.cpp
+  MCSFrame.cpp
   MCSPIRVStreamer.cpp
   MCSubtargetInfo.cpp
   MCSymbol.cpp
   MCSymbolELF.cpp
+  MCSymbolGOFF.cpp
   MCSymbolXCOFF.cpp
   MCTargetOptions.cpp
   MCTargetOptionsCommandFlags.cpp
@@ -74,13 +77,14 @@ add_llvm_component_library(LLVMMC
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/MC
 
   LINK_COMPONENTS
+  BinaryFormat
+  DebugInfoDWARFLowLevel
   Support
   TargetParser
-  BinaryFormat
-  DebugInfoCodeView
 
   DEPENDS
   intrinsics_gen
+  llvm_vcsrevision_h
   )
 
 add_subdirectory(MCParser)

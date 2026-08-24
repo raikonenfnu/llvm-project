@@ -28,7 +28,7 @@ class SUnit;
 class TargetInstrInfo;
 class TargetSubtargetInfo;
 
-class VLIWResourceModel {
+class LLVM_ABI VLIWResourceModel {
 protected:
   const TargetInstrInfo *TII;
 
@@ -67,7 +67,7 @@ protected:
 
 /// Extend the standard ScheduleDAGMILive to provide more context and override
 /// the top-level schedule() driver.
-class VLIWMachineScheduler : public ScheduleDAGMILive {
+class LLVM_ABI VLIWMachineScheduler : public ScheduleDAGMILive {
 public:
   VLIWMachineScheduler(MachineSchedContext *C,
                        std::unique_ptr<MachineSchedStrategy> S)
@@ -86,7 +86,7 @@ public:
 // MachineSchedStrategy.
 //===----------------------------------------------------------------------===//
 
-class ConvergingVLIWScheduler : public MachineSchedStrategy {
+class LLVM_ABI ConvergingVLIWScheduler : public MachineSchedStrategy {
 protected:
   /// Store the state used by ConvergingVLIWScheduler heuristics, required
   ///  for the lifetime of one invocation of pickNode().
@@ -151,7 +151,7 @@ protected:
         : Available(ID, Name + ".A"),
           Pending(ID << ConvergingVLIWScheduler::LogMaxQID, Name + ".P") {}
 
-    ~VLIWSchedBoundary();
+    LLVM_ABI ~VLIWSchedBoundary();
     VLIWSchedBoundary &operator=(const VLIWSchedBoundary &other) = delete;
     VLIWSchedBoundary(const VLIWSchedBoundary &other) = delete;
 
@@ -165,8 +165,9 @@ protected:
       // a slightly different heuristic for small and large functions. For small
       // functions, it's important to use the height/depth of the instruction.
       // For large functions, prioritizing by height or depth increases spills.
-      CriticalPathLength = DAG->getBBSize() / SchedModel->getIssueWidth();
-      if (DAG->getBBSize() < 50)
+      const auto BBSize = DAG->getBBSize();
+      CriticalPathLength = BBSize / SchedModel->getIssueWidth();
+      if (BBSize < 50)
         // We divide by two as a cheap and simple heuristic to reduce the
         // critcal path length, which increases the priority of using the graph
         // height/depth in the scheduler's cost computation.
@@ -185,19 +186,19 @@ protected:
       return Available.getID() == ConvergingVLIWScheduler::TopQID;
     }
 
-    bool checkHazard(SUnit *SU);
+    LLVM_ABI bool checkHazard(SUnit *SU);
 
-    void releaseNode(SUnit *SU, unsigned ReadyCycle);
+    LLVM_ABI void releaseNode(SUnit *SU, unsigned ReadyCycle);
 
-    void bumpCycle();
+    LLVM_ABI void bumpCycle();
 
-    void bumpNode(SUnit *SU);
+    LLVM_ABI void bumpNode(SUnit *SU);
 
-    void releasePending();
+    LLVM_ABI void releasePending();
 
-    void removeReady(SUnit *SU);
+    LLVM_ABI void removeReady(SUnit *SU);
 
-    SUnit *pickOnlyChoice();
+    LLVM_ABI SUnit *pickOnlyChoice();
 
     bool isLatencyBound(SUnit *SU) {
       if (CurrCycle >= CriticalPathLength)
@@ -222,7 +223,7 @@ public:
   enum { TopQID = 1, BotQID = 2, LogMaxQID = 2 };
 
   ConvergingVLIWScheduler() : Top(TopQID, "TopQ"), Bot(BotQID, "BotQ") {}
-  virtual ~ConvergingVLIWScheduler() = default;
+  ~ConvergingVLIWScheduler() override = default;
 
   void initialize(ScheduleDAGMI *dag) override;
 

@@ -190,12 +190,28 @@ uptr internal_strlcat(char *dst, const char *src, uptr maxlen) {
   return dstlen + srclen;
 }
 
+char* internal_strcat(char* dst, const char* src) {
+  uptr len = internal_strlen(dst);
+  uptr i;
+  for (i = 0; src[i]; i++) dst[len + i] = src[i];
+  dst[len + i] = 0;
+  return dst;
+}
+
 char *internal_strncat(char *dst, const char *src, uptr n) {
   uptr len = internal_strlen(dst);
   uptr i;
   for (i = 0; i < n && src[i]; i++)
     dst[len + i] = src[i];
   dst[len + i] = 0;
+  return dst;
+}
+
+wchar_t *internal_wcscpy(wchar_t *dst, const wchar_t *src) {
+  wchar_t *dst_it = dst;
+  do {
+    *dst_it++ = *src++;
+  } while (*src);
   return dst;
 }
 
@@ -215,6 +231,14 @@ char *internal_strncpy(char *dst, const char *src, uptr n) {
   for (i = 0; i < n && src[i]; i++)
     dst[i] = src[i];
   internal_memset(dst + i, '\0', n - i);
+  return dst;
+}
+
+wchar_t *internal_wcsncpy(wchar_t *dst, const wchar_t *src, uptr n) {
+  uptr i;
+  for (i = 0; i < n && src[i]; ++i)
+    dst[i] = src[i];
+  internal_memset(dst + i, 0, (n - i) * sizeof(wchar_t));
   return dst;
 }
 

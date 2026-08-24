@@ -37,37 +37,37 @@
 
 ; RUN: llvm-bcanalyzer -dump %t.out.index.bc | FileCheck %s --check-prefix=COMBINED
 ; Live, NotEligibleForImport, dso_local, Internal
-; COMBINED-DAG: <COMBINED {{.*}} op2=119
+; COMBINED-DAG: <COMBINED_PROFILE {{.*}} op2=119
 ; Live, dso_local, Internal
-; COMBINED-DAG: <COMBINED {{.*}} op2=103
+; COMBINED-DAG: <COMBINED_PROFILE {{.*}} op2=103
 ; Live, Local, WeakODR
-; COMBINED-DAG: <COMBINED {{.*}} op2=101
+; COMBINED-DAG: <COMBINED_PROFILE {{.*}} op2=101
 ; Live, Local, LinkOnceODR
-; COMBINED-DAG: <COMBINED {{.*}} op2=99
+; COMBINED-DAG: <COMBINED_PROFILE {{.*}} op2=99
 ; Live, Local, AvailableExternally
-; COMBINED-DAG: <COMBINED {{.*}} op2=97
+; COMBINED-DAG: <COMBINED_PROFILE {{.*}} op2=97
 ; Live, Local, External
-; COMBINED-DAG: <COMBINED {{.*}} op2=96
-; COMBINED-DAG: <COMBINED {{.*}} op2=96
-; COMBINED-DAG: <COMBINED {{.*}} op2=96
+; COMBINED-DAG: <COMBINED_PROFILE {{.*}} op2=96
+; COMBINED-DAG: <COMBINED_PROFILE {{.*}} op2=96
+; COMBINED-DAG: <COMBINED_PROFILE {{.*}} op2=96
 ; Local, (Dead)
-; COMBINED-DAG: <COMBINED {{.*}} op2=64
-; COMBINED-DAG: <COMBINED {{.*}} op2=64
-; COMBINED-DAG: <COMBINED {{.*}} op2=64
+; COMBINED-DAG: <COMBINED_PROFILE {{.*}} op2=64
+; COMBINED-DAG: <COMBINED_PROFILE {{.*}} op2=64
+; COMBINED-DAG: <COMBINED_PROFILE {{.*}} op2=64
 
 ; Dead-stripping on the index allows to internalize these,
 ; and limit the import of @baz thanks to early pruning.
 ; CHECK-NOT: available_externally {{.*}} @baz()
 ; CHECK: @llvm.global_ctors =
 ; CHECK: define internal void @_GLOBAL__I_a()
-; CHECK: define internal void @bar() {
+; CHECK: define internal void @bar()
 ; CHECK: define internal void @bar_internal()
-; CHECK: define internal void @dead_func() {
+; CHECK: define internal void @dead_func()
 ; CHECK-NOT: available_externally {{.*}} @baz()
 ; LTO2-NOT: available_externally {{.*}} @baz()
 ; LTO2: @llvm.global_ctors =
 ; LTO2: define internal void @_GLOBAL__I_a()
-; LTO2: define internal void @bar() [[ATTR:#[0-9]+]] {
+; LTO2: define internal void @bar() [[ATTR:#[0-9]+]]
 ; LTO2: define internal void @bar_internal()
 ; LTO2-NOT: @dead_func()
 ; LTO2-NOT: available_externally {{.*}} @baz()
@@ -79,7 +79,7 @@
 
 ; Make sure we keep @linkonceodrfuncwithalias in Input/deadstrip.ll alive as it
 ; is reachable from @main.
-; LTO2-CHECK2: define weak_odr dso_local void @linkonceodrfuncwithalias() [[ATTR:#[0-9]+]] {
+; LTO2-CHECK2: define weak_odr dso_local void @linkonceodrfuncwithalias() [[ATTR:#[0-9]+]]
 
 ; We should have eventually removed @baz since it was internalized and unused
 ; CHECK2-NM-NOT: _baz

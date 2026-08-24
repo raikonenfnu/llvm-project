@@ -9,6 +9,7 @@
 #include "src/__support/File/file.h"
 #include "src/stdio/fputc.h"
 #include "src/stdio/putchar.h"
+#include "src/stdio/stderr.h"
 
 #include "test/UnitTest/Test.h"
 
@@ -17,14 +18,14 @@ TEST(LlvmLibcPutcTest, PrintOut) {
 
   constexpr char simple[] = "A simple string written to stdout\n";
   for (const char &c : simple) {
-    result = __llvm_libc::putchar(c);
+    result = LIBC_NAMESPACE::putchar(c);
     EXPECT_GE(result, 0);
   }
 
   constexpr char more[] = "A simple string written to stderr\n";
-  for (const char &c : simple) {
-    result =
-        __llvm_libc::fputc(c, reinterpret_cast<FILE *>(__llvm_libc::stderr));
+  for (const char &c : more) {
+    result = LIBC_NAMESPACE::fputc(
+        c, reinterpret_cast<FILE *>(LIBC_NAMESPACE::stderr));
   }
   EXPECT_GE(result, 0);
 }

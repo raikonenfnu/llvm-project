@@ -28,10 +28,8 @@ class CSKYDAGToDAGISel : public SelectionDAGISel {
   const CSKYSubtarget *Subtarget;
 
 public:
-  static char ID;
-
-  explicit CSKYDAGToDAGISel(CSKYTargetMachine &TM, CodeGenOpt::Level OptLevel)
-      : SelectionDAGISel(ID, TM, OptLevel) {}
+  explicit CSKYDAGToDAGISel(CSKYTargetMachine &TM, CodeGenOptLevel OptLevel)
+      : SelectionDAGISel(TM, OptLevel) {}
 
   bool runOnMachineFunction(MachineFunction &MF) override {
     // Reset the subtarget each time through.
@@ -48,16 +46,26 @@ public:
 
   SDNode *createGPRPairNode(EVT VT, SDValue V0, SDValue V1);
 
-  bool SelectInlineAsmMemoryOperand(const SDValue &Op, unsigned ConstraintID,
+  bool SelectInlineAsmMemoryOperand(const SDValue &Op,
+                                    InlineAsm::ConstraintCode ConstraintID,
                                     std::vector<SDValue> &OutOps) override;
 
 #include "CSKYGenDAGISel.inc"
 };
+
+class CSKYDAGToDAGISelLegacy : public SelectionDAGISelLegacy {
+public:
+  static char ID;
+  explicit CSKYDAGToDAGISelLegacy(CSKYTargetMachine &TM,
+                                  CodeGenOptLevel OptLevel)
+      : SelectionDAGISelLegacy(
+            ID, std::make_unique<CSKYDAGToDAGISel>(TM, OptLevel)) {}
+};
 } // namespace
 
-char CSKYDAGToDAGISel::ID = 0;
+char CSKYDAGToDAGISelLegacy::ID = 0;
 
-INITIALIZE_PASS(CSKYDAGToDAGISel, DEBUG_TYPE, PASS_NAME, false, false)
+INITIALIZE_PASS(CSKYDAGToDAGISelLegacy, DEBUG_TYPE, PASS_NAME, false, false)
 
 void CSKYDAGToDAGISel::Select(SDNode *N) {
   // If we have a custom node, we have already selected
@@ -383,9 +391,10 @@ SDNode *CSKYDAGToDAGISel::createGPRPairNode(EVT VT, SDValue V0, SDValue V1) {
 }
 
 bool CSKYDAGToDAGISel::SelectInlineAsmMemoryOperand(
-    const SDValue &Op, unsigned ConstraintID, std::vector<SDValue> &OutOps) {
+    const SDValue &Op, const InlineAsm::ConstraintCode ConstraintID,
+    std::vector<SDValue> &OutOps) {
   switch (ConstraintID) {
-  case InlineAsm::Constraint_m:
+  case InlineAsm::ConstraintCode::m:
     // We just support simple memory operands that have a single address
     // operand and need no special handling.
     OutOps.push_back(Op);
@@ -398,6 +407,6 @@ bool CSKYDAGToDAGISel::SelectInlineAsmMemoryOperand(
 }
 
 FunctionPass *llvm::createCSKYISelDag(CSKYTargetMachine &TM,
-                                      CodeGenOpt::Level OptLevel) {
-  return new CSKYDAGToDAGISel(TM, OptLevel);
+                                      CodeGenOptLevel OptLevel) {
+  return new CSKYDAGToDAGISelLegacy(TM, OptLevel);
 }

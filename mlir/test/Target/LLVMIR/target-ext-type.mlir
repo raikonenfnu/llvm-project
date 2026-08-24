@@ -2,8 +2,14 @@
 
 // CHECK: @global = global target("spirv.DeviceEvent") zeroinitializer
 llvm.mlir.global external @global() {addr_space = 0 : i32} : !llvm.target<"spirv.DeviceEvent"> {
-  %0 = llvm.mlir.constant(0 : i64) : !llvm.target<"spirv.DeviceEvent">
+  %0 = llvm.mlir.zero : !llvm.target<"spirv.DeviceEvent">
   llvm.return %0 : !llvm.target<"spirv.DeviceEvent">
+}
+
+// CHECK: @amdgcn_named_barrier = internal addrspace(3) global target("amdgcn.named.barrier", 0) poison
+llvm.mlir.global internal @amdgcn_named_barrier() {addr_space = 3 : i32} : !llvm.target<"amdgcn.named.barrier", 0> {
+  %0 = llvm.mlir.poison : !llvm.target<"amdgcn.named.barrier", 0>
+  llvm.return %0 : !llvm.target<"amdgcn.named.barrier", 0>
 }
 
 // CHECK-LABEL: define target("spirv.Event") @func2() {
@@ -22,7 +28,7 @@ llvm.func @func2() -> !llvm.target<"spirv.Event"> {
 // CHECK-NEXT:    %1 = freeze target("spirv.DeviceEvent") zeroinitializer
 // CHECK-NEXT:    ret void
 llvm.func @func3() {
-  %0 = llvm.mlir.constant(0 : i64) : !llvm.target<"spirv.DeviceEvent">
+  %0 = llvm.mlir.zero : !llvm.target<"spirv.DeviceEvent">
   %1 = llvm.freeze %0 : !llvm.target<"spirv.DeviceEvent">
   llvm.return
 }

@@ -239,6 +239,71 @@ static bool trySequenceOfOnes(uint64_t UImm,
   return true;
 }
 
+// Attempt to expand 64-bit immediate values that consist of shifted negated
+// components such as 0x1234'5678'edcb'a987, where the upper half is the
+// negation of the lower half. Immediates of this form can generally be
+// expanded via a sequence of MOVN+MOVK to expand the lower half, followed by
+// an EOR or EON to shift and negate the result to the upper half, for example:
+//   mov  x0, #-22137          // =0xffffffffffffa987
+//   movk x0, #60875, lsl #16  // =0xffffffffedcba987
+//   eor  x0, x0, x0, lsl #32  // =0xffffffffedcba987 ^ 0xedcba98700000000
+//                                =0x12345678edcba987.
+// The logic extends to other shift amounts in the range [17, 48) (outside that
+// range we get runs of ones/zeros that are optimised separately).
+//
+// When the lower half contains a 16-bit chunk of ones, such as
+// 0x0000'5678'ffff'a987, the intermediate MOVK is redundant.
+// Similarly, when it contains a 16-bit chunk of zeros, such as
+// 0xffff'5678'0000'a987, the expansion can instead be effected by expanding
+// the negation of the lower half and negating the result with an EON, e.g.:
+//   mov  x0, #-43400          // =0xffffffffffff5678
+//   eon  x0, x0, x0, lsl #32  // =0xffffffffffff5678 ^ ~0xffff567800000000
+//                                =0xffffffffffff5678 ^  0x0000a987ffffffff
+//                                =0xffff56780000a987.
+// In any of these cases, the expansion with EOR/EON saves an instruction
+// compared to the default expansion based on MOV and MOVKs.
+static bool tryCopyWithNegation(uint64_t Imm, bool AllowThreeSequence,
+                                SmallVectorImpl<ImmInsnModel> &Insn) {
+  // Degenerate cases where Imm is a run of ones should be handled separately.
+  if (!Imm || llvm::isShiftedMask_64(Imm))
+    return false;
+
+  const unsigned Mask = 0xffff;
+
+  auto tryExpansion = [&](unsigned Opc, uint64_t C, unsigned N) {
+    assert((C >> 32) == 0xffffffffULL && "Invalid immediate");
+    const unsigned Imm0 = C & Mask;
+    const unsigned Imm16 = (C >> 16) & Mask;
+    if (Imm0 != Mask && Imm16 != Mask && !AllowThreeSequence)
+      return false;
+
+    if (Imm0 != Mask) {
+      Insn.push_back({AArch64::MOVNXi, Imm0 ^ Mask, 0});
+      if (Imm16 != Mask)
+        Insn.push_back({AArch64::MOVKXi, Imm16, 16});
+    } else {
+      Insn.push_back({AArch64::MOVNXi, Imm16 ^ Mask, 16});
+    }
+
+    Insn.push_back({Opc, 0, N});
+    return true;
+  };
+
+  for (unsigned N = 17; N < 48; ++N) {
+    // Attempt EOR.
+    uint64_t C = 0xffffffff00000000ULL | (Imm ^ (Imm << N));
+    if ((C ^ (C << N)) == Imm && tryExpansion(AArch64::EORXrs, C, N))
+      return true;
+
+    // Attempt EON.
+    C = 0xffffffff00000000ULL | (Imm ^ ~(~Imm << N));
+    if ((C ^ ~(C << N)) == Imm && tryExpansion(AArch64::EONXrs, C, N))
+      return true;
+  }
+
+  return false;
+}
+
 static uint64_t GetRunOfOnesStartingAt(uint64_t V, uint64_t StartPosition) {
   uint64_t NumOnes = llvm::countr_one(V >> StartPosition);
 
@@ -362,6 +427,105 @@ static bool tryAndOfLogicalImmediates(uint64_t UImm,
   return false;
 }
 
+// Check whether the constant can be represented by exclusive-or of two 64-bit
+// logical immediates. If so, materialize it with an ORR instruction followed
+// by an EOR instruction.
+//
+// This encoding allows all remaining repeated byte patterns, and many repeated
+// 16-bit values, to be encoded without needing four instructions. It can also
+// represent some irregular bitmasks (although those would mostly only need
+// three instructions otherwise).
+static bool tryEorOfLogicalImmediates(uint64_t Imm,
+                                      SmallVectorImpl<ImmInsnModel> &Insn) {
+  // Determine the larger repetition size of the two possible logical
+  // immediates, by finding the repetition size of Imm.
+  unsigned BigSize = 64;
+
+  do {
+    BigSize /= 2;
+    uint64_t Mask = (1ULL << BigSize) - 1;
+
+    if ((Imm & Mask) != ((Imm >> BigSize) & Mask)) {
+      BigSize *= 2;
+      break;
+    }
+  } while (BigSize > 2);
+
+  uint64_t BigMask = ((uint64_t)-1LL) >> (64 - BigSize);
+
+  // Find the last bit of each run of ones, circularly. For runs which wrap
+  // around from bit 0 to bit 63, this is the bit before the most-significant
+  // zero, otherwise it is the least-significant bit in the run of ones.
+  uint64_t RunStarts = Imm & ~rotl<uint64_t>(Imm, 1);
+
+  // Find the smaller repetition size of the two possible logical immediates by
+  // counting the number of runs of one-bits within the BigSize-bit value. Both
+  // sizes may be the same. The EOR may add one or subtract one from the
+  // power-of-two count that can be represented by a logical immediate, or it
+  // may be left unchanged.
+  int RunsPerBigChunk = popcount(RunStarts & BigMask);
+
+  static const int8_t BigToSmallSizeTable[32] = {
+      -1, -1, 0,  1,  2,  2,  -1, 3,  3,  3,  -1, -1, -1, -1, -1, 4,
+      4,  4,  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 5,
+  };
+
+  int BigToSmallShift = BigToSmallSizeTable[RunsPerBigChunk];
+
+  // Early-exit if the big chunk couldn't be a power-of-two number of runs
+  // EORed with another single run.
+  if (BigToSmallShift == -1)
+    return false;
+
+  unsigned SmallSize = BigSize >> BigToSmallShift;
+
+  // 64-bit values with a bit set every (1 << index) bits.
+  static const uint64_t RepeatedOnesTable[] = {
+      0xffffffffffffffff, 0x5555555555555555, 0x1111111111111111,
+      0x0101010101010101, 0x0001000100010001, 0x0000000100000001,
+      0x0000000000000001,
+  };
+
+  // This RepeatedOnesTable lookup is a faster implementation of the division
+  // 0xffffffffffffffff / ((1 << SmallSize) - 1), and can be thought of as
+  // dividing the 64-bit value into fields of width SmallSize, and placing a
+  // one in the least significant bit of each field.
+  uint64_t SmallOnes = RepeatedOnesTable[countr_zero(SmallSize)];
+
+  // Now we try to find the number of ones in each of the smaller repetitions,
+  // by looking at runs of ones in Imm. This can take three attempts, as the
+  // EOR may have changed the length of the first two runs we find.
+
+  // Rotate a run of ones so we can count the number of trailing set bits.
+  int Rotation = countr_zero(RunStarts);
+  uint64_t RotatedImm = rotr<uint64_t>(Imm, Rotation);
+  for (int Attempt = 0; Attempt < 3; ++Attempt) {
+    unsigned RunLength = countr_one(RotatedImm);
+
+    // Construct candidate values BigImm and SmallImm, such that if these two
+    // values are encodable, we have a solution. (SmallImm is constructed to be
+    // encodable, but this isn't guaranteed when RunLength >= SmallSize)
+    uint64_t SmallImm =
+        rotl<uint64_t>((SmallOnes << RunLength) - SmallOnes, Rotation);
+    uint64_t BigImm = Imm ^ SmallImm;
+
+    uint64_t BigEncoding = 0;
+    uint64_t SmallEncoding = 0;
+    if (AArch64_AM::processLogicalImmediate(BigImm, 64, BigEncoding) &&
+        AArch64_AM::processLogicalImmediate(SmallImm, 64, SmallEncoding)) {
+      Insn.push_back({AArch64::ORRXri, 0, SmallEncoding});
+      Insn.push_back({AArch64::EORXri, 1, BigEncoding});
+      return true;
+    }
+
+    // Rotate to the next run of ones
+    Rotation += countr_zero(rotr<uint64_t>(RunStarts, Rotation) & ~1);
+    RotatedImm = rotr<uint64_t>(Imm, Rotation);
+  }
+
+  return false;
+}
+
 /// \brief Expand a MOVi32imm or MOVi64imm pseudo instruction to a
 /// MOVZ or MOVN of width BitSize followed by up to 3 MOVK instructions.
 static inline void expandMOVImmSimple(uint64_t Imm, unsigned BitSize,
@@ -419,6 +583,14 @@ static inline void expandMOVImmSimple(uint64_t Imm, unsigned BitSize,
     Insn.push_back({ Opc, Imm16,
                      AArch64_AM::getShifterImm(AArch64_AM::LSL, Shift) });
   }
+
+  // Now, we get 16-bit divided Imm. If high and low bits are same in
+  // 32-bit, there is an opportunity to reduce instruction.
+  if (Insn.size() > 2 && (Imm >> 32) == (Imm & 0xffffffffULL)) {
+    for (int Size = Insn.size(); Size > 2; Size--)
+      Insn.pop_back();
+    Insn.push_back({AArch64::ORRXrs, 0, 32});
+  }
 }
 
 /// Expand a MOVi32imm or MOVi64imm pseudo instruction to one or more
@@ -442,6 +614,8 @@ void AArch64_IMM::expandMOVImm(uint64_t Imm, unsigned BitSize,
   // Prefer MOVZ/MOVN over ORR because of the rules for the "mov" alias.
   if ((BitSize / 16) - OneChunks <= 1 || (BitSize / 16) - ZeroChunks <= 1) {
     expandMOVImmSimple(Imm, BitSize, OneChunks, ZeroChunks, Insn);
+    assert(Insn.size() == 1 &&
+           "Move of immediate should have expanded to a single MOVZ/MOVN");
     return;
   }
 
@@ -478,7 +652,7 @@ void AArch64_IMM::expandMOVImm(uint64_t Imm, unsigned BitSize,
     uint64_t ShiftedMask = (0xFFFFULL << Shift);
     uint64_t ZeroChunk = UImm & ~ShiftedMask;
     uint64_t OneChunk = UImm | ShiftedMask;
-    uint64_t RotatedImm = (UImm << 32) | (UImm >> 32);
+    uint64_t RotatedImm = llvm::rotl(UImm, 32);
     uint64_t ReplicateChunk = ZeroChunk | (RotatedImm & ShiftedMask);
     if (AArch64_AM::processLogicalImmediate(ZeroChunk, BitSize, Encoding) ||
         AArch64_AM::processLogicalImmediate(OneChunk, BitSize, Encoding) ||
@@ -501,6 +675,14 @@ void AArch64_IMM::expandMOVImm(uint64_t Imm, unsigned BitSize,
 
   // Attempt to use a sequence of ORR-immediate followed by AND-immediate.
   if (tryAndOfLogicalImmediates(Imm, Insn))
+    return;
+
+  // Attempt to use a sequence of ORR-immediate followed by EOR-immediate.
+  if (tryEorOfLogicalImmediates(UImm, Insn))
+    return;
+
+  // Attempt to use a sequence of MOVN+EOR/EON (shifted register).
+  if (tryCopyWithNegation(Imm, /*AllowThreeSequence=*/false, Insn))
     return;
 
   // FIXME: Add more two-instruction sequences.
@@ -530,7 +712,26 @@ void AArch64_IMM::expandMOVImm(uint64_t Imm, unsigned BitSize,
   if (BitSize == 64 && trySequenceOfOnes(UImm, Insn))
     return;
 
+  // Attempt to use a sequence of MOVN+MOVK+EOR/EON (shifted register).
+  if (tryCopyWithNegation(Imm, /*AllowThreeSequence=*/true, Insn))
+    return;
+
   // We found no possible two or three instruction sequence; use the general
   // four-instruction sequence.
   expandMOVImmSimple(Imm, BitSize, OneChunks, ZeroChunks, Insn);
+}
+
+void AArch64_IMM::expandMOVAddr(unsigned Opcode, unsigned TargetFlags,
+                                bool IsTargetMachO,
+                                SmallVectorImpl<AddrInsnModel> &Insn) {
+  if (Opcode == AArch64::MOVaddrBA && IsTargetMachO) {
+    // Block address on Mach-O goes through a constant pool.
+    Insn.push_back({AArch64::ADRP});
+    Insn.push_back({AArch64::LDRXui});
+    return;
+  }
+  Insn.push_back({AArch64::ADRP});
+  if (TargetFlags & AArch64II::MO_TAGGED)
+    Insn.push_back({AArch64::MOVKXi});
+  Insn.push_back({AArch64::ADDXri});
 }

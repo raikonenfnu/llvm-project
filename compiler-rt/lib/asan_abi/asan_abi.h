@@ -11,12 +11,18 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <sys/cdefs.h>
 #include <sys/types.h>
 
-extern "C" {
+__BEGIN_DECLS
+
 // Functions concerning instrumented global variables:
 void __asan_abi_register_image_globals();
 void __asan_abi_unregister_image_globals();
+void __asan_abi_register_elf_globals(bool *flag, void *start, void *stop);
+void __asan_abi_unregister_elf_globals(bool *flag, void *start, void *stop);
+void __asan_abi_register_globals(void *globals, size_t n);
+void __asan_abi_unregister_globals(void *globals, size_t n);
 
 // Functions concerning dynamic library initialization
 void __asan_abi_before_dynamic_init(const char *module_name);
@@ -70,6 +76,9 @@ void *__asan_abi_load_cxx_array_cookie(void **p);
 void *__asan_abi_get_current_fake_stack();
 void *__asan_abi_addr_is_in_fake_stack(void *fake_stack, void *addr, void **beg,
                                        void **end);
+void __asan_abi_suppress_fake_stack();
+void __asan_abi_unsuppress_fake_stack();
+
 // Functions concerning poisoning and unpoisoning fake stack alloca
 void __asan_abi_alloca_poison(void *addr, size_t size);
 void __asan_abi_allocas_unpoison(void *top, void *bottom);
@@ -80,5 +89,6 @@ void *__asan_abi_stack_malloc_always_n(size_t scale, size_t size);
 
 // Functions concerning fake stack free
 void __asan_abi_stack_free_n(int scale, void *p, size_t n);
-}
+
+__END_DECLS
 #endif // ASAN_ABI_H

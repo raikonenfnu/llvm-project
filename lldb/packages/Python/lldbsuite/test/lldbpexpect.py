@@ -10,10 +10,15 @@ from lldbsuite.test.decorators import *
 
 
 @skipIfRemote
-@skipIfWindows  # llvm.org/pr22274: need a pexpect replacement for windows
+@skipIfWindows
+@add_test_categories(["pexpect"])
 class PExpectTest(TestBase):
     NO_DEBUG_INFO_TESTCASE = True
     PROMPT = "(lldb) "
+
+    # Override this value in a subclass to make the test fail faster and make
+    # debugging less tedious.
+    TIMEOUT = 60
 
     def expect_prompt(self):
         self.child.expect_exact(self.PROMPT)
@@ -22,13 +27,18 @@ class PExpectTest(TestBase):
         self,
         executable=None,
         extra_args=None,
-        timeout=60,
         dimensions=None,
         run_under=None,
         post_spawn=None,
+        encoding=None,
         use_colors=False,
     ):
-        logfile = getattr(sys.stdout, "buffer", sys.stdout) if self.TraceOn() else None
+        # Using a log file is incompatible with using utf-8 as the encoding.
+        logfile = (
+            getattr(sys.stdout, "buffer", sys.stdout)
+            if (self.TraceOn() and not encoding)
+            else None
+        )
 
         args = []
         if run_under is not None:
@@ -49,6 +59,8 @@ class PExpectTest(TestBase):
         env["TERM"] = "vt100"
         env["HOME"] = self.getBuildDir()
 
+        timeout = self.TIMEOUT
+
         import pexpect
 
         self.child = pexpect.spawn(
@@ -58,6 +70,7 @@ class PExpectTest(TestBase):
             timeout=timeout,
             dimensions=dimensions,
             env=env,
+            encoding=encoding,
         )
         self.child.ptyproc.delayafterclose = timeout / 10
         self.child.ptyproc.delayafterterminate = timeout / 10
@@ -97,4 +110,4 @@ class PExpectTest(TestBase):
         Returns the escape sequence to move the cursor forward/right
         by a certain amount of characters.
         """
-        return b"\x1b\[" + str(chars_to_move).encode("utf-8") + b"C"
+        return b"\x1b\\[" + str(chars_to_move).encode("utf-8") + b"C"

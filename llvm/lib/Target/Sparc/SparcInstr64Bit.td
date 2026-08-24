@@ -42,12 +42,15 @@ def : Pat<(i64 (sext i32:$val)), (SRAri $val, 0)>;
 def : Pat<(i64 (and i64:$val, 0xffffffff)), (SRLri $val, 0)>;
 def : Pat<(i64 (sext_inreg i64:$val, i32)), (SRAri $val, 0)>;
 
+} // Predicates = [Is64Bit]
+
+let Predicates = [HasV9] in {
+
 defm SLLX : F3_S<"sllx", 0b100101, 1, shl, i64, shift_imm6, I64Regs>;
 defm SRLX : F3_S<"srlx", 0b100110, 1, srl, i64, shift_imm6, I64Regs>;
 defm SRAX : F3_S<"srax", 0b100111, 1, sra, i64, shift_imm6, I64Regs>;
 
-} // Predicates = [Is64Bit]
-
+} // Predicates = [HasV9]
 
 //===----------------------------------------------------------------------===//
 // 64-bit Immediates.
@@ -65,8 +68,9 @@ def : Pat<(i64 0), (COPY (i64 G0))>,
   Requires<[Is64Bit]>;
 
 // The ALU instructions want their simm13 operands as i32 immediates.
+// FIXME: This is no longer true, they are now pointer-sized.
 def as_i32imm : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(N->getSExtValue(), SDLoc(N), MVT::i32);
+  return CurDAG->getSignedTargetConstant(N->getSExtValue(), SDLoc(N), MVT::i32);
 }]>;
 def : Pat<(i64 simm13:$val), (ORri (i64 G0), (as_i32imm $val))>;
 def : Pat<(i64 SETHIimm:$val), (SETHIi (HI22 $val))>;
@@ -90,8 +94,8 @@ def HIX22 : SDNodeXForm<imm, [{
 }]>;
 // Bits 0-9 with ones in bits 10-31. Same as assembler's %lox.
 def LOX10 : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(~(~N->getZExtValue() & 0x3ff), SDLoc(N),
-                                   MVT::i32);
+  return CurDAG->getSignedTargetConstant(~(~N->getZExtValue() & 0x3ff),
+                                         SDLoc(N), MVT::i32);
 }]>;
 def : Pat<(i64 nimm33:$val), (XORri (SETHIi (HIX22 $val)), (LOX10 $val))>,
       Requires<[Is64Bit]>;
@@ -144,43 +148,31 @@ def : Pat<(i64 imm:$val),
 
 let Predicates = [Is64Bit] in {
 
-// Register-register instructions.
-let isCodeGenOnly = 1 in {
-defm ANDX    : F3_12<"and", 0b000001, and, I64Regs, i64, i64imm>;
-defm ORX     : F3_12<"or",  0b000010, or,  I64Regs, i64, i64imm>;
-defm XORX    : F3_12<"xor", 0b000011, xor, I64Regs, i64, i64imm>;
+def : Pat<(and i64:$lhs, i64:$rhs), (ANDrr $lhs, $rhs)>;
+def : Pat<(or  i64:$lhs, i64:$rhs), (ORrr  $lhs, $rhs)>;
+def : Pat<(xor i64:$lhs, i64:$rhs), (XORrr $lhs, $rhs)>;
 
-def ANDXNrr  : F3_1<2, 0b000101,
-                 (outs I64Regs:$rd), (ins I64Regs:$rs1, I64Regs:$rs2),
-                 "andn $rs1, $rs2, $rd",
-                 [(set i64:$rd, (and i64:$rs1, (not i64:$rs2)))]>;
-def ORXNrr   : F3_1<2, 0b000110,
-                 (outs I64Regs:$rd), (ins I64Regs:$rs1, I64Regs:$rs2),
-                 "orn $rs1, $rs2, $rd",
-                 [(set i64:$rd, (or i64:$rs1, (not i64:$rs2)))]>;
-def XNORXrr  : F3_1<2, 0b000111,
-                   (outs I64Regs:$rd), (ins I64Regs:$rs1, I64Regs:$rs2),
-                   "xnor $rs1, $rs2, $rd",
-                   [(set i64:$rd, (not (xor i64:$rs1, i64:$rs2)))]>;
+def : Pat<(and i64:$lhs, (i64 simm13:$rhs)), (ANDri $lhs, imm:$rhs)>;
+def : Pat<(or  i64:$lhs, (i64 simm13:$rhs)), (ORri  $lhs, imm:$rhs)>;
+def : Pat<(xor i64:$lhs, (i64 simm13:$rhs)), (XORri $lhs, imm:$rhs)>;
 
-defm ADDX    : F3_12<"add", 0b000000, add, I64Regs, i64, i64imm>;
-defm SUBX    : F3_12<"sub", 0b000100, sub, I64Regs, i64, i64imm>;
+def : Pat<(and i64:$lhs, (not i64:$rhs)), (ANDNrr $lhs, $rhs)>;
+def : Pat<(or  i64:$lhs, (not i64:$rhs)), (ORNrr  $lhs, $rhs)>;
+def : Pat<(not (xor i64:$lhs, i64:$rhs)), (XNORrr $lhs, $rhs)>;
 
-def TLS_ADDXrr : F3_1<2, 0b000000, (outs I64Regs:$rd),
-                   (ins I64Regs:$rs1, I64Regs:$rs2, TailRelocSymTLSAdd:$sym),
-                   "add $rs1, $rs2, $rd, $sym",
-                   [(set i64:$rd,
-                       (tlsadd i64:$rs1, i64:$rs2, tglobaltlsaddr:$sym))]>;
+def : Pat<(addc i64:$lhs, i64:$rhs), (ADDCCrr $lhs, $rhs)>, Requires<[HasVIS3]>;
+def : Pat<(add i64:$lhs, i64:$rhs), (ADDrr $lhs, $rhs)>;
+def : Pat<(sub i64:$lhs, i64:$rhs), (SUBrr $lhs, $rhs)>;
 
-// "LEA" form of add
-def LEAX_ADDri : F3_2<2, 0b000000,
-                     (outs I64Regs:$rd), (ins (MEMri $rs1, $simm13):$addr),
-                     "add ${addr:arith}, $rd",
-                     [(set iPTR:$rd, ADDRri:$addr)]>;
-}
+def : Pat<(addc i64:$lhs, (i64 simm13:$rhs)), (ADDCCri $lhs, imm:$rhs)>, Requires<[HasVIS3]>;
+def : Pat<(add i64:$lhs, (i64 simm13:$rhs)), (ADDri $lhs, imm:$rhs)>;
+def : Pat<(sub i64:$lhs, (i64 simm13:$rhs)), (SUBri $lhs, imm:$rhs)>;
 
-def : Pat<(SPcmpicc i64:$a, i64:$b), (CMPrr $a, $b)>;
-def : Pat<(SPcmpicc i64:$a, (i64 simm13:$b)), (CMPri $a, (as_i32imm $b))>;
+def : Pat<(tlsadd i64:$rs1, i64:$rs2, tglobaltlsaddr:$sym),
+          (TLS_ADDrr $rs1, $rs2, $sym)>;
+
+def : Pat<(SPcmpicc i64:$lhs, i64:$rhs), (SUBCCrr $lhs, $rhs)>;
+def : Pat<(SPcmpicc i64:$lhs, (i64 simm13:$rhs)), (SUBCCri $lhs, imm:$rhs)>;
 def : Pat<(i64 (ctpop i64:$src)), (POPCrr $src)>;
 
 } // Predicates = [Is64Bit]
@@ -190,39 +182,15 @@ def : Pat<(i64 (ctpop i64:$src)), (POPCrr $src)>;
 // 64-bit Integer Multiply and Divide.
 //===----------------------------------------------------------------------===//
 
-let Predicates = [Is64Bit] in {
-
-def MULXrr : F3_1<2, 0b001001,
-                  (outs I64Regs:$rd), (ins I64Regs:$rs1, I64Regs:$rs2),
-                  "mulx $rs1, $rs2, $rd",
-                  [(set i64:$rd, (mul i64:$rs1, i64:$rs2))]>;
-def MULXri : F3_2<2, 0b001001,
-                  (outs IntRegs:$rd), (ins IntRegs:$rs1, i64imm:$simm13),
-                  "mulx $rs1, $simm13, $rd",
-                  [(set i64:$rd, (mul i64:$rs1, (i64 simm13:$simm13)))]>;
+let Predicates = [HasV9] in {
+defm MULX    : F3_12<"mulx", 0b001001, mul, I64Regs, i64, i64imm>;
 
 // Division can trap.
 let hasSideEffects = 1 in {
-def SDIVXrr : F3_1<2, 0b101101,
-                   (outs I64Regs:$rd), (ins I64Regs:$rs1, I64Regs:$rs2),
-                   "sdivx $rs1, $rs2, $rd",
-                   [(set i64:$rd, (sdiv i64:$rs1, i64:$rs2))]>;
-def SDIVXri : F3_2<2, 0b101101,
-                   (outs IntRegs:$rd), (ins IntRegs:$rs1, i64imm:$simm13),
-                   "sdivx $rs1, $simm13, $rd",
-                   [(set i64:$rd, (sdiv i64:$rs1, (i64 simm13:$simm13)))]>;
-
-def UDIVXrr : F3_1<2, 0b001101,
-                   (outs I64Regs:$rd), (ins I64Regs:$rs1, I64Regs:$rs2),
-                   "udivx $rs1, $rs2, $rd",
-                   [(set i64:$rd, (udiv i64:$rs1, i64:$rs2))]>;
-def UDIVXri : F3_2<2, 0b001101,
-                   (outs IntRegs:$rd), (ins IntRegs:$rs1, i64imm:$simm13),
-                   "udivx $rs1, $simm13, $rd",
-                   [(set i64:$rd, (udiv i64:$rs1, (i64 simm13:$simm13)))]>;
+defm SDIVX    : F3_12<"sdivx", 0b101101, sdiv, I64Regs, i64, i64imm>;
+defm UDIVX    : F3_12<"udivx", 0b001101, udiv, I64Regs, i64, i64imm>;
 } // hasSideEffects = 1
-
-} // Predicates = [Is64Bit]
+} // Predicates = [HasV9]
 
 
 //===----------------------------------------------------------------------===//
@@ -236,7 +204,7 @@ def UDIVXri : F3_2<2, 0b001101,
 //
 // SPARC v9 adds 64-bit loads as well as a sign-extending ldsw i32 loads.
 
-let Predicates = [Is64Bit] in {
+let Predicates = [HasV9] in {
 
 // 64-bit loads.
 defm LDX   : LoadA<"ldx", 0b001011, 0b011011, load, I64Regs, i64>;
@@ -255,6 +223,16 @@ let mayLoad = 1, isAsmParserOnly = 1 in {
                        [(set i64:$rd,
                            (load_gdop ADDRrr:$addr, tglobaladdr:$sym))]>;
 }
+
+// Sign-extending load of i32 into i64 is a new SPARC v9 instruction.
+defm LDSW   : LoadA<"ldsw", 0b001000, 0b011000, sextloadi32, I64Regs, i64>;
+
+// 64-bit stores.
+defm STX    : StoreA<"stx", 0b001110, 0b011110, store, I64Regs, i64>;
+
+} // Predicates = [HasV9]
+
+let Predicates = [Is64Bit] in {
 
 // Extending loads to i64.
 def : Pat<(i64 (zextloadi1 ADDRrr:$addr)), (LDUBrr ADDRrr:$addr)>;
@@ -280,12 +258,6 @@ def : Pat<(i64 (zextloadi32 ADDRrr:$addr)), (LDrr ADDRrr:$addr)>;
 def : Pat<(i64 (zextloadi32 ADDRri:$addr)), (LDri ADDRri:$addr)>;
 def : Pat<(i64 (extloadi32 ADDRrr:$addr)),  (LDrr ADDRrr:$addr)>;
 def : Pat<(i64 (extloadi32 ADDRri:$addr)),  (LDri ADDRri:$addr)>;
-
-// Sign-extending load of i32 into i64 is a new SPARC v9 instruction.
-defm LDSW   : LoadA<"ldsw", 0b001000, 0b011000, sextloadi32, I64Regs, i64>;
-
-// 64-bit stores.
-defm STX    : StoreA<"stx", 0b001110, 0b011110, store, I64Regs, i64>;
 
 // Truncating stores from i64 are identical to the i32 stores.
 def : Pat<(truncstorei8  i64:$src, ADDRrr:$addr), (STBrr ADDRrr:$addr, $src)>;
@@ -345,7 +317,7 @@ def FMOVD_XCC : F4_3<0b110101, 0b000010, (outs DFPRegs:$rd),
                       "fmovd$cond %xcc, $rs2, $rd",
                       [(set f64:$rd,
                        (SPselectxcc f64:$rs2, f64:$f, imm:$cond))]>;
-let Predicates = [Is64Bit, HasHardQuad] in
+let append Predicates = [HasHardQuad] in
 def FMOVQ_XCC : F4_3<0b110101, 0b000011, (outs QFPRegs:$rd),
                       (ins QFPRegs:$rs2, QFPRegs:$f, CCOp:$cond),
                       "fmovq$cond %xcc, $rs2, $rd",
@@ -353,6 +325,8 @@ def FMOVQ_XCC : F4_3<0b110101, 0b000011, (outs QFPRegs:$rd),
                        (SPselectxcc f128:$rs2, f128:$f, imm:$cond))]>;
 } // opf_cc
 } // Uses, Constraints
+
+} // Predicates = [Is64Bit]
 
 // Branch On integer register with Prediction (BPr).
 let isBranch = 1, isTerminator = 1, hasDelaySlot = 1 in
@@ -374,11 +348,11 @@ multiclass bpr_alias<string OpcStr, Instruction NAPT, Instruction APT> {
                   (APT I64Regs:$rs1, bprtarget16:$imm16), 0>;
 }
 
-let Predicates = [Is64Bit] in
+let Predicates = [HasV9] in
   defm BP : BranchOnReg<[(SPbrreg bb:$imm16, imm:$rcond, i64:$rs1)]>;
 
 // Move integer register on register condition (MOVr).
-let Predicates = [Is64Bit], Constraints = "$f = $rd" in {
+let Predicates = [HasV9], Constraints = "$f = $rd" in {
   def MOVRrr : F4_4r<0b101111, 0b00000, (outs IntRegs:$rd),
                    (ins I64Regs:$rs1, IntRegs:$rs2, IntRegs:$f, RegCCOp:$rcond),
                    "movr$rcond $rs1, $rs2, $rd",
@@ -391,7 +365,7 @@ let Predicates = [Is64Bit], Constraints = "$f = $rd" in {
 }
 
 // Move FP register on integer register condition (FMOVr).
-let Predicates = [Is64Bit], Constraints = "$f = $rd" in {
+let Predicates = [HasV9], Constraints = "$f = $rd" in {
   def FMOVRS : F4_4r<0b110101, 0b00101,
                 (outs FPRegs:$rd), (ins I64Regs:$rs1, FPRegs:$rs2, FPRegs:$f,  RegCCOp:$rcond),
                 "fmovrs$rcond $rs1, $rs2, $rd",
@@ -400,7 +374,7 @@ let Predicates = [Is64Bit], Constraints = "$f = $rd" in {
                 (outs DFPRegs:$rd), (ins I64Regs:$rs1, DFPRegs:$rs2, DFPRegs:$f, RegCCOp:$rcond),
                 "fmovrd$rcond $rs1, $rs2, $rd",
                 [(set f64:$rd, (SPselectreg f64:$rs2, f64:$f, imm:$rcond, i64:$rs1))]>;
-  let Predicates = [HasHardQuad] in
+  let append Predicates = [HasHardQuad] in
   def FMOVRQ : F4_4r<0b110101, 0b00111,
                 (outs QFPRegs:$rd), (ins I64Regs:$rs1, QFPRegs:$rs2, QFPRegs:$f, RegCCOp:$rcond),
                 "fmovrq$rcond $rs1, $rs2, $rd",
@@ -411,7 +385,7 @@ let Predicates = [Is64Bit], Constraints = "$f = $rd" in {
 // 64-bit Floating Point Conversions.
 //===----------------------------------------------------------------------===//
 
-let Predicates = [Is64Bit] in {
+let Predicates = [HasV9] in {
 
 def FXTOS : F3_3u<2, 0b110100, 0b010000100,
                  (outs FPRegs:$rd), (ins DFPRegs:$rs2),
@@ -421,7 +395,7 @@ def FXTOD : F3_3u<2, 0b110100, 0b010001000,
                  (outs DFPRegs:$rd), (ins DFPRegs:$rs2),
                  "fxtod $rs2, $rd",
                  [(set DFPRegs:$rd, (SPxtof DFPRegs:$rs2))]>;
-let Predicates = [Is64Bit, HasHardQuad] in
+let append Predicates = [HasHardQuad] in
 def FXTOQ : F3_3u<2, 0b110100, 0b010001100,
                  (outs QFPRegs:$rd), (ins DFPRegs:$rs2),
                  "fxtoq $rs2, $rd",
@@ -435,14 +409,16 @@ def FDTOX : F3_3u<2, 0b110100, 0b010000010,
                  (outs DFPRegs:$rd), (ins DFPRegs:$rs2),
                  "fdtox $rs2, $rd",
                  [(set DFPRegs:$rd, (SPftox DFPRegs:$rs2))]>;
-let Predicates = [Is64Bit, HasHardQuad] in
+let append Predicates = [HasHardQuad] in
 def FQTOX : F3_3u<2, 0b110100, 0b010000011,
                  (outs DFPRegs:$rd), (ins QFPRegs:$rs2),
                  "fqtox $rs2, $rd",
                  [(set DFPRegs:$rd, (SPftox QFPRegs:$rs2))]>;
 
-} // Predicates = [Is64Bit]
+} // Predicates = [HasV9]
 
+// Conditional move patterns.
+let Predicates = [Is64Bit] in {
 def : Pat<(SPselectxcc i64:$t, i64:$f, imm:$cond),
           (MOVXCCrr $t, $f, imm:$cond)>;
 def : Pat<(SPselectxcc (i64 simm11:$t), i64:$f, imm:$cond),
@@ -462,20 +438,10 @@ def : Pat<(SPselectreg i64:$t, i64:$f, imm:$rcond, i64:$rs1),
           (MOVRrr $rs1, $t, $f, imm:$rcond)>;
 def : Pat<(SPselectreg (i64 simm10:$t), i64:$f, imm:$rcond, i64:$rs1),
           (MOVRri $rs1, (as_i32imm $t), $f, imm:$rcond)>;
-
 } // Predicates = [Is64Bit]
 
-
-// 64 bit SETHI
-let Predicates = [Is64Bit], isCodeGenOnly = 1 in {
-def SETHIXi : F2_1<0b100,
-                   (outs IntRegs:$rd), (ins i64imm:$imm22),
-                   "sethi $imm22, $rd",
-                   [(set i64:$rd, SETHIimm:$imm22)]>;
-}
-
 // ATOMICS.
-let Predicates = [Is64Bit, HasV9], Constraints = "$swap = $rd" in {
+let Predicates = [HasV9], Constraints = "$swap = $rd" in {
   def CASXArr: F3_1_asi<3, 0b111110,
                 (outs I64Regs:$rd), (ins I64Regs:$rs1, I64Regs:$rs2,
                                      I64Regs:$swap, ASITag:$asi),
@@ -492,15 +458,15 @@ let Predicates = [Is64Bit, HasV9], Constraints = "$swap = $rd" in {
 
 let Predicates = [Is64Bit] in {
 
-// atomic_load_64 addr -> load addr
-def : Pat<(i64 (atomic_load_64 ADDRrr:$src)), (LDXrr ADDRrr:$src)>;
-def : Pat<(i64 (atomic_load_64 ADDRri:$src)), (LDXri ADDRri:$src)>;
+// atomic_load_nonext_64 addr -> load addr
+def : Pat<(i64 (atomic_load_nonext_64 ADDRrr:$src)), (LDXrr ADDRrr:$src)>;
+def : Pat<(i64 (atomic_load_nonext_64 ADDRri:$src)), (LDXri ADDRri:$src)>;
 
 // atomic_store_64 val, addr -> store val, addr
 def : Pat<(atomic_store_64 i64:$val, ADDRrr:$dst), (STXrr ADDRrr:$dst, $val)>;
 def : Pat<(atomic_store_64 i64:$val, ADDRri:$dst), (STXri ADDRri:$dst, $val)>;
 
-def : Pat<(atomic_cmp_swap_64 i64:$rs1, i64:$rs2, i64:$swap),
+def : Pat<(atomic_cmp_swap_i64 i64:$rs1, i64:$rs2, i64:$swap),
           (CASXArr $rs1, $rs2, $swap, 0x80)>;
 
 } // Predicates = [Is64Bit]
@@ -512,25 +478,25 @@ let Predicates = [Is64Bit], hasSideEffects = 1, Uses = [ICC], cc = 0b10 in
 let Predicates = [Is64Bit] in {
 
 def : Pat<(SPhi tglobaladdr:$in), (SETHIi tglobaladdr:$in)>;
-def : Pat<(SPlo tglobaladdr:$in), (ORXri (i64 G0), tglobaladdr:$in)>;
+def : Pat<(SPlo tglobaladdr:$in), (ORri (i64 G0), tglobaladdr:$in)>;
 def : Pat<(SPhi tconstpool:$in), (SETHIi tconstpool:$in)>;
-def : Pat<(SPlo tconstpool:$in), (ORXri (i64 G0), tconstpool:$in)>;
+def : Pat<(SPlo tconstpool:$in), (ORri (i64 G0), tconstpool:$in)>;
 
 // GlobalTLS addresses
 def : Pat<(SPhi tglobaltlsaddr:$in), (SETHIi tglobaltlsaddr:$in)>;
-def : Pat<(SPlo tglobaltlsaddr:$in), (ORXri (i64 G0), tglobaltlsaddr:$in)>;
+def : Pat<(SPlo tglobaltlsaddr:$in), (ORri (i64 G0), tglobaltlsaddr:$in)>;
 def : Pat<(add (SPhi tglobaltlsaddr:$in1), (SPlo tglobaltlsaddr:$in2)),
-          (ADDXri (SETHIXi tglobaltlsaddr:$in1), (tglobaltlsaddr:$in2))>;
+          (ADDri (SETHIi tglobaltlsaddr:$in1), (tglobaltlsaddr:$in2))>;
 def : Pat<(xor (SPhi tglobaltlsaddr:$in1), (SPlo tglobaltlsaddr:$in2)),
-          (XORXri  (SETHIXi tglobaltlsaddr:$in1), (tglobaltlsaddr:$in2))>;
+          (XORri  (SETHIi tglobaltlsaddr:$in1), (tglobaltlsaddr:$in2))>;
 
 // Blockaddress
 def : Pat<(SPhi tblockaddress:$in), (SETHIi tblockaddress:$in)>;
-def : Pat<(SPlo tblockaddress:$in), (ORXri (i64 G0), tblockaddress:$in)>;
+def : Pat<(SPlo tblockaddress:$in), (ORri (i64 G0), tblockaddress:$in)>;
 
 // Add reg, lo.  This is used when taking the addr of a global/constpool entry.
-def : Pat<(add iPTR:$r, (SPlo tglobaladdr:$in)), (ADDXri $r, tglobaladdr:$in)>;
-def : Pat<(add iPTR:$r, (SPlo tconstpool:$in)),  (ADDXri $r, tconstpool:$in)>;
+def : Pat<(add iPTR:$r, (SPlo tglobaladdr:$in)), (ADDri $r, tglobaladdr:$in)>;
+def : Pat<(add iPTR:$r, (SPlo tconstpool:$in)),  (ADDri $r, tconstpool:$in)>;
 def : Pat<(add iPTR:$r, (SPlo tblockaddress:$in)),
-                        (ADDXri $r, tblockaddress:$in)>;
+                        (ADDri $r, tblockaddress:$in)>;
 }

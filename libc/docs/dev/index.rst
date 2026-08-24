@@ -7,16 +7,18 @@ Developer Guides
 Navigate to the links below for information on the respective topics:
 
 .. toctree::
+   :maxdepth: 1
 
+   building_docs
    code_style
    source_tree_layout
    entrypoints
-   cmake_build_rules
-   clang_tidy_checks
+   implementing_a_function
+   config_options
    fuzzing
-   ground_truth_specification
    header_generation
    implementation_standard
    undefined_behavior
-   api_test
-   mechanics_of_public_api
+   printf_behavior
+   syscall_wrapper_refactor
+   modular_format

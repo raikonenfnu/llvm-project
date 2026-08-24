@@ -16,7 +16,6 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/BlockFrequency.h"
-#include "llvm/Support/raw_ostream.h"
 #include <optional>
 
 namespace llvm {
@@ -28,20 +27,16 @@ class MBFIWrapper {
  public:
   MBFIWrapper(const MachineBlockFrequencyInfo &I) : MBFI(I) {}
 
-  BlockFrequency getBlockFreq(const MachineBasicBlock *MBB) const;
-  void setBlockFreq(const MachineBasicBlock *MBB, BlockFrequency F);
-  std::optional<uint64_t>
+  LLVM_ABI BlockFrequency getBlockFreq(const MachineBasicBlock *MBB) const;
+  LLVM_ABI void setBlockFreq(const MachineBasicBlock *MBB, BlockFrequency F);
+  LLVM_ABI std::optional<uint64_t>
   getBlockProfileCount(const MachineBasicBlock *MBB) const;
 
-  raw_ostream &printBlockFreq(raw_ostream &OS,
-                              const MachineBasicBlock *MBB) const;
-  raw_ostream &printBlockFreq(raw_ostream &OS,
-                              const BlockFrequency Freq) const;
-  void view(const Twine &Name, bool isSimple = true);
-  uint64_t getEntryFreq() const;
-  const MachineBlockFrequencyInfo &getMBFI() { return MBFI; }
+  LLVM_ABI void view(const Twine &Name, bool isSimple = true);
+  LLVM_ABI BlockFrequency getEntryFreq() const;
+  const MachineBlockFrequencyInfo &getMBFI() const { return MBFI; }
 
- private:
+private:
   const MachineBlockFrequencyInfo &MBFI;
   DenseMap<const MachineBasicBlock *, BlockFrequency> MergedBBFreq;
 };

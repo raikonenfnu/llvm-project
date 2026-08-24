@@ -59,6 +59,7 @@ char *internal_strdup(const char *s);
 uptr internal_strlen(const char *s);
 uptr internal_strlcat(char *dst, const char *src, uptr maxlen);
 char *internal_strncat(char *dst, const char *src, uptr n);
+char* internal_strcat(char* dst, const char* src);
 int internal_strncmp(const char *s1, const char *s2, uptr n);
 uptr internal_strlcpy(char *dst, const char *src, uptr maxlen);
 char *internal_strncpy(char *dst, const char *src, uptr n);
@@ -71,7 +72,8 @@ int internal_snprintf(char *buffer, uptr length, const char *format, ...)
     FORMAT(3, 4);
 uptr internal_wcslen(const wchar_t *s);
 uptr internal_wcsnlen(const wchar_t *s, uptr maxlen);
-
+wchar_t *internal_wcscpy(wchar_t *dst, const wchar_t *src);
+wchar_t *internal_wcsncpy(wchar_t *dst, const wchar_t *src, uptr maxlen);
 // Return true if all bytes in [mem, mem+size) are zero.
 // Optimized for the case when the result is true.
 bool mem_is_zero(const char *mem, uptr size);

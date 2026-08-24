@@ -44,9 +44,8 @@ enum { MemDisp = 0, MemBase = 1, MemIndex = 2, MemOuter = 3 };
 /// Enums for pc-relative memory operand decoding. Supports these forms:
 /// (d,PC)
 /// (d,PC,Xn)
-/// ([bd,PC],Xn,od)
-/// ([bd,PC,Xn],od)
-enum { PCRelDisp = 0, PCRelIndex = 1, PCRelOuter = 2 };
+/// (bd,PC,Xn.Size*SCALE)
+enum { PCRelDisp = 0, PCRelIndex = 1, PCRelScale = 2 };
 
 enum class MemAddrModeKind : unsigned {
   j = 1, // (An)
@@ -66,8 +65,8 @@ enum class MemAddrModeKind : unsigned {
   q,     // (d,PC)
   k,     // (d,PC,Xn.L)
   K,     // (d,PC,Xn.W)
-  l,     // (d,PC,Xn.L,SCALE)
-  L,     // (d,PC,Xn.W,SCALE)
+  l,     // (bd,PC,Xn.L,SCALE)
+  L,     // (bd,PC,Xn.W,SCALE)
   x,     // ([bd,PC],Xn.L,SCALE,od)
   X,     // ([bd,PC],Xn.W,SCALE,od)
   y,     // ([bd,PC,Xn.L,SCALE],od)
@@ -82,11 +81,11 @@ template <typename value_t> value_t swapWord(value_t Val) {
   const unsigned NumWords = sizeof(Val) / 2;
   if (NumWords <= 1)
     return Val;
-  Val = support::endian::byte_swap(Val, support::big);
+  Val = support::endian::byte_swap(Val, llvm::endianness::big);
   value_t NewVal = 0;
   for (unsigned i = 0U; i != NumWords; ++i) {
     uint16_t Part = (Val >> (i * 16)) & 0xFFFF;
-    Part = support::endian::byte_swap(Part, support::big);
+    Part = support::endian::byte_swap(Part, llvm::endianness::big);
     NewVal |= (Part << (i * 16));
   }
   return NewVal;

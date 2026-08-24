@@ -32,7 +32,7 @@ FPClassTest llvm::fneg(FPClassTest Mask) {
   return NewMask;
 }
 
-FPClassTest llvm::fabs(FPClassTest Mask) {
+FPClassTest llvm::inverse_fabs(FPClassTest Mask) {
   FPClassTest NewMask = Mask & fcNan;
   if (Mask & fcPosZero)
     NewMask |= fcZero;
@@ -41,6 +41,19 @@ FPClassTest llvm::fabs(FPClassTest Mask) {
   if (Mask & fcPosNormal)
     NewMask |= fcNormal;
   if (Mask & fcPosInf)
+    NewMask |= fcInf;
+  return NewMask;
+}
+
+FPClassTest llvm::unknown_sign(FPClassTest Mask) {
+  FPClassTest NewMask = Mask & fcNan;
+  if (Mask & fcZero)
+    NewMask |= fcZero;
+  if (Mask & fcSubnormal)
+    NewMask |= fcSubnormal;
+  if (Mask & fcNormal)
+    NewMask |= fcNormal;
+  if (Mask & fcInf)
     NewMask |= fcInf;
   return NewMask;
 }
@@ -92,4 +105,71 @@ raw_ostream &llvm::operator<<(raw_ostream &OS, FPClassTest Mask) {
 
   OS << ')';
   return OS;
+}
+
+void DenormalFPEnv::print(raw_ostream &OS, bool OmitIfSame) const {
+  if (F32Mode == DefaultMode) {
+    DefaultMode.print(OS, /*Legacy=*/false, OmitIfSame);
+    return;
+  }
+
+  // Omit printing the base mode if only the f32 mode isn't the default.
+  if (DefaultMode != DenormalMode::getDefault()) {
+    DefaultMode.print(OS, /*Legacy=*/false, OmitIfSame);
+    OS << ", ";
+  }
+
+  OS << "float: ";
+  F32Mode.print(OS, /*Legacy=*/false, OmitIfSame);
+}
+
+static bool cannotOrderStrictlyGreaterImpl(FPClassTest LHS, FPClassTest RHS,
+                                           bool OrEqual, bool OrderedZero) {
+  LHS &= ~fcNan;
+  RHS &= ~fcNan;
+
+  if (LHS == fcNone || RHS == fcNone)
+    return true;
+
+  FPClassTest LowestBitRHS = static_cast<FPClassTest>(RHS & -RHS);
+  FPClassTest HighestBitLHS = static_cast<FPClassTest>(1 << Log2_32(LHS));
+
+  if (!OrderedZero) {
+    // Introduce conflict in zero bits if we're treating them as equal.
+    if (LowestBitRHS == fcNegZero)
+      LowestBitRHS = fcPosZero;
+    if (HighestBitLHS == fcNegZero)
+      HighestBitLHS = fcPosZero;
+  }
+
+  if (LowestBitRHS > HighestBitLHS) {
+    assert((LHS & RHS) == fcNone && "no bits should intersect");
+    return true;
+  }
+
+  if (LowestBitRHS < HighestBitLHS)
+    return false;
+
+  constexpr FPClassTest ExactValuesMask = fcZero | fcInf;
+  return !OrEqual && (LowestBitRHS & ExactValuesMask) != fcNone;
+}
+
+bool llvm::cannotOrderStrictlyGreater(FPClassTest LHS, FPClassTest RHS,
+                                      bool OrderedZeroSign) {
+  return cannotOrderStrictlyGreaterImpl(LHS, RHS, false, OrderedZeroSign);
+}
+
+bool llvm::cannotOrderStrictlyGreaterEq(FPClassTest LHS, FPClassTest RHS,
+                                        bool OrderedZeroSign) {
+  return cannotOrderStrictlyGreaterImpl(LHS, RHS, true, OrderedZeroSign);
+}
+
+bool llvm::cannotOrderStrictlyLess(FPClassTest LHS, FPClassTest RHS,
+                                   bool OrderedZeroSign) {
+  return cannotOrderStrictlyGreaterImpl(RHS, LHS, false, OrderedZeroSign);
+}
+
+bool llvm::cannotOrderStrictlyLessEq(FPClassTest LHS, FPClassTest RHS,
+                                     bool OrderedZeroSign) {
+  return cannotOrderStrictlyGreaterImpl(RHS, LHS, true, OrderedZeroSign);
 }

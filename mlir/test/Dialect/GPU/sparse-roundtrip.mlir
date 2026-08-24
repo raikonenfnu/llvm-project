@@ -62,8 +62,8 @@ module attributes {gpu.container_module} {
   // CHECK: %{{.*}}, %{{.*}} = gpu.create_csr async [%{{.*}}] %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : memref<?xindex>, memref<?xindex>, memref<?xf32>
   // CHECK: %{{.*}}, %{{.*}} = gpu.create_csr async [%{{.*}}] %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : memref<?xindex>, memref<?xindex>, memref<?xf32>
   // CHECK: %{{.*}}, %{{.*}} = gpu.spgemm_create_descr async [%{{.*}}]
-  // CHECK: %{{.*}}, %{{.*}} = gpu.spgemm_work_estimation_or_compute async [%{{.*}}]{ WORK_ESTIMATION} %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : f32 into memref<0xi8>
-  // CHECK: %{{.*}}, %{{.*}} = gpu.spgemm_work_estimation_or_compute async [%{{.*}}]{ COMPUTE} %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : f32 into memref<0xi8>
+  // CHECK: %{{.*}}, %{{.*}} = gpu.spgemm_work_estimation_or_compute async [%{{.*}}]{WORK_ESTIMATION} %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : f32 into memref<0xi8>
+  // CHECK: %{{.*}}, %{{.*}} = gpu.spgemm_work_estimation_or_compute async [%{{.*}}]{COMPUTE} %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : f32 into memref<0xi8>
   // CHECK: %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} = gpu.spmat_get_size async [%{{.*}}] %{{.*}}
   // CHECK: %{{.*}} = gpu.set_csr_pointers async [%{{.*}}] %{{.*}}, {{.*}}, {{.*}}, {{.*}} : memref<?xindex>, memref<?xindex>, memref<?xf32>
   // CHECK: %{{.*}} = gpu.spgemm_copy async [%{{.*}}] %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : f32
@@ -125,6 +125,30 @@ module attributes {gpu.container_module} {
     %token8 = gpu.destroy_sp_mat async [%token7] %spmat
     %token9 = gpu.destroy_dn_tensor async [%token8] %dnmat
     gpu.wait [%token9]
+    return
+  }
+
+  // CHECK-LABEL: func @csc_and_bsr
+  // CHECK: %{{.*}} = gpu.wait async
+  // CHECK: %{{.*}}, %{{.*}} = gpu.alloc async [%{{.*}}] (%{{.*}}) : memref<?xindex>
+  // CHECK: %{{.*}}, %{{.*}} = gpu.alloc async [%{{.*}}] (%{{.*}}) : memref<?xf64>
+  // CHECK: %{{.*}}, %{{.*}} = gpu.create_csc async [%{{.*}}] %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : memref<?xindex>, memref<?xindex>, memref<?xf64>
+  // CHECK: %{{.*}}, %{{.*}} = gpu.create_bsr async [%{{.*}}] %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : memref<?xindex>, memref<?xindex>, memref<?xf64>
+  // CHECK: gpu.wait [%{{.*}}]
+  // CHECK: return
+  func.func @csc_and_bsr(%arg0: index) {
+    %token0 = gpu.wait async
+    %mem1, %token1 = gpu.alloc async [%token0] (%arg0) : memref<?xindex>
+    %mem2, %token2 = gpu.alloc async [%token1] (%arg0) : memref<?xf64>
+    %csc, %token3 = gpu.create_csc async [%token2]
+      %arg0, %arg0, %arg0, %mem1, %mem1, %mem2
+      : memref<?xindex>, memref<?xindex>, memref<?xf64>
+    %bsr, %token4 = gpu.create_bsr async [%token3]
+      %arg0, %arg0, %arg0, %arg0, %arg0, %mem1, %mem1, %mem2
+      : memref<?xindex>, memref<?xindex>, memref<?xf64>
+    %token5 = gpu.destroy_sp_mat async [%token4] %csc
+    %token6 = gpu.destroy_sp_mat async [%token5] %bsr
+    gpu.wait [%token6]
     return
   }
 

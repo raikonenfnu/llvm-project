@@ -25,6 +25,7 @@
 #include "test_macros.h"
 #include "test_execution_policies.h"
 #include "test_iterators.h"
+#include <type_algorithms.h>
 
 EXECUTION_POLICY_SFINAE_TEST(for_each);
 
@@ -50,16 +51,6 @@ struct Test {
 
 int main(int, char**) {
   types::for_each(types::forward_iterator_list<int*>{}, TestIteratorWithPolicies<Test>{});
-
-#ifndef TEST_HAS_NO_EXCEPTIONS
-  std::set_terminate(terminate_successful);
-  int a[] = {1, 2};
-  try {
-    std::for_each(std::execution::par, std::begin(a), std::end(a), [](int) { throw int{}; });
-  } catch (int) {
-    assert(false);
-  }
-#endif
 
   return 0;
 }

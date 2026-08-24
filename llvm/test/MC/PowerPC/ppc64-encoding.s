@@ -144,7 +144,7 @@
 # CHECK-LE: mcrf 2, 3                       # encoding: [0x00,0x00,0x0c,0x4d]
             mcrf 2, 3
 
-# System call instruction
+# System call instructions
 
 # CHECK-BE: sc 1                            # encoding: [0x44,0x00,0x00,0x22]
 # CHECK-LE: sc 1                            # encoding: [0x22,0x00,0x00,0x44]
@@ -152,6 +152,13 @@
 # CHECK-BE: sc                              # encoding: [0x44,0x00,0x00,0x02]
 # CHECK-LE: sc                              # encoding: [0x02,0x00,0x00,0x44]
             sc
+
+# CHECK-BE: scv 1                            # encoding: [0x44,0x00,0x00,0x21]
+# CHECK-LE: scv 1                            # encoding: [0x21,0x00,0x00,0x44]
+            scv 1
+# CHECK-BE: scv 2                            # encoding: [0x44,0x00,0x00,0x41]
+# CHECK-LE: scv 2                            # encoding: [0x41,0x00,0x00,0x44]
+            scv 2
 
 # Branch history rolling buffer
 
@@ -1090,6 +1097,11 @@
 # CHECK-BE: msgsync                            # encoding: [0x7c,0x00,0x06,0xec]
 # CHECK-LE: msgsync                            # encoding: [0xec,0x06,0x00,0x7c]
             msgsync
+
+# Message Send (Processor Control)
+# CHECK-BE: msgsndp 3                          # encoding: [0x7c,0x00,0x19,0x1c]
+# CHECK-LE: msgsndp 3                          # encoding: [0x1c,0x19,0x00,0x7c]
+            msgsndp 3
 
 # SLB Invalidate Entry Global
 # CHECK-BE: slbieg 6, 21                       # encoding: [0x7c,0xc0,0xab,0xa4]

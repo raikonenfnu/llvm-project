@@ -25,7 +25,7 @@
 ; RUN: llvm-dis %t.o.4.opt.bc -o - | FileCheck %s --check-prefix=CHECK-IR
 
 ;; Regular LTO WPD
-; RUN: opt -o %t4.o %s
+; RUN: opt -passes=assign-guid -o %t4.o %s
 ; RUN: %gold -m elf_x86_64 -plugin %llvmshlibdir/LLVMgold%shlibext \
 ; RUN:   --plugin-opt=whole-program-visibility \
 ; RUN:   --plugin-opt=save-temps \
@@ -114,7 +114,7 @@ target triple = "x86_64-grtev4-linux-gnu"
 ;; Prevent the vtables from being dead code eliminated.
 @llvm.used = appending global [3 x ptr] [ ptr @_ZTV1B, ptr @_ZTV1C, ptr @_ZTV1D]
 
-; CHECK-IR-LABEL: define dso_local i32 @_start
+; CHECK-IR-LABEL: define dso_local {{(noundef )?}}i32 @_start
 define i32 @_start(ptr %obj, ptr %obj2, i32 %a) {
 entry:
   %vtable = load ptr, ptr %obj

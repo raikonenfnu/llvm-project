@@ -23,10 +23,6 @@
 #include "clang/AST/TemplateBase.h"
 #include "clang/AST/Type.h"
 #include "clang/Basic/SourceLocation.h"
-#include "llvm/Support/TrailingObjects.h"
-#include <algorithm>
-#include <string>
-#include <utility>
 
 using namespace clang;
 
@@ -45,10 +41,10 @@ ConceptSpecializationExpr::ConceptSpecializationExpr(
   assert(!Loc->getNestedNameSpecifierLoc() ||
          (!Loc->getNestedNameSpecifierLoc()
                .getNestedNameSpecifier()
-               ->isInstantiationDependent() &&
+               .isInstantiationDependent() &&
           !Loc->getNestedNameSpecifierLoc()
                .getNestedNameSpecifier()
-               ->containsUnexpandedParameterPack()));
+               .containsUnexpandedParameterPack()));
   assert((!isValueDependent() || isInstantiationDependent()) &&
          "should not be value-dependent");
 }
@@ -97,8 +93,7 @@ ConceptSpecializationExpr::Create(const ASTContext &C, ConceptReference *Loc,
 const TypeConstraint *
 concepts::ExprRequirement::ReturnTypeRequirement::getTypeConstraint() const {
   assert(isTypeConstraint());
-  auto TPL =
-      TypeConstraintInfo.getPointer().get<TemplateParameterList *>();
+  auto TPL = cast<TemplateParameterList *>(TypeConstraintInfo.getPointer());
   return cast<TemplateTypeParmDecl>(TPL->getParam(0))
       ->getTypeConstraint();
 }
@@ -106,8 +101,13 @@ concepts::ExprRequirement::ReturnTypeRequirement::getTypeConstraint() const {
 // Search through the requirements, and see if any have a RecoveryExpr in it,
 // which means this RequiresExpr ALSO needs to be invalid.
 static bool RequirementContainsError(concepts::Requirement *R) {
-  if (auto *ExprReq = dyn_cast<concepts::ExprRequirement>(R))
-    return ExprReq->getExpr() && ExprReq->getExpr()->containsErrors();
+  if (auto *ExprReq = dyn_cast<concepts::ExprRequirement>(R)) {
+    if (ExprReq->isExprSubstitutionFailure())
+      return true;
+    if (auto *E = ExprReq->getExpr())
+      return E->containsErrors();
+    return false;
+  }
 
   if (auto *NestedReq = dyn_cast<concepts::NestedRequirement>(R))
     return !NestedReq->hasInvalidConstraint() &&
@@ -117,13 +117,15 @@ static bool RequirementContainsError(concepts::Requirement *R) {
 }
 
 RequiresExpr::RequiresExpr(ASTContext &C, SourceLocation RequiresKWLoc,
-                           RequiresExprBodyDecl *Body,
+                           RequiresExprBodyDecl *Body, SourceLocation LParenLoc,
                            ArrayRef<ParmVarDecl *> LocalParameters,
+                           SourceLocation RParenLoc,
                            ArrayRef<concepts::Requirement *> Requirements,
                            SourceLocation RBraceLoc)
     : Expr(RequiresExprClass, C.BoolTy, VK_PRValue, OK_Ordinary),
       NumLocalParameters(LocalParameters.size()),
-      NumRequirements(Requirements.size()), Body(Body), RBraceLoc(RBraceLoc) {
+      NumRequirements(Requirements.size()), Body(Body), LParenLoc(LParenLoc),
+      RParenLoc(RParenLoc), RBraceLoc(RBraceLoc) {
   RequiresExprBits.IsSatisfied = false;
   RequiresExprBits.RequiresKWLoc = RequiresKWLoc;
   bool Dependent = false;
@@ -146,10 +148,8 @@ RequiresExpr::RequiresExpr(ASTContext &C, SourceLocation RequiresKWLoc,
     if (RequirementContainsError(R))
       setDependence(getDependence() | ExprDependence::Error);
   }
-  std::copy(LocalParameters.begin(), LocalParameters.end(),
-            getTrailingObjects<ParmVarDecl *>());
-  std::copy(Requirements.begin(), Requirements.end(),
-            getTrailingObjects<concepts::Requirement *>());
+  llvm::copy(LocalParameters, getTrailingObjects<ParmVarDecl *>());
+  llvm::copy(Requirements, getTrailingObjects<concepts::Requirement *>());
   RequiresExprBits.IsSatisfied |= Dependent;
   // FIXME: move the computing dependency logic to ComputeDependence.h
   if (ContainsUnexpandedParameterPack)
@@ -168,18 +168,18 @@ RequiresExpr::RequiresExpr(ASTContext &C, EmptyShell Empty,
   : Expr(RequiresExprClass, Empty), NumLocalParameters(NumLocalParameters),
     NumRequirements(NumRequirements) { }
 
-RequiresExpr *
-RequiresExpr::Create(ASTContext &C, SourceLocation RequiresKWLoc,
-                     RequiresExprBodyDecl *Body,
-                     ArrayRef<ParmVarDecl *> LocalParameters,
-                     ArrayRef<concepts::Requirement *> Requirements,
-                     SourceLocation RBraceLoc) {
+RequiresExpr *RequiresExpr::Create(
+    ASTContext &C, SourceLocation RequiresKWLoc, RequiresExprBodyDecl *Body,
+    SourceLocation LParenLoc, ArrayRef<ParmVarDecl *> LocalParameters,
+    SourceLocation RParenLoc, ArrayRef<concepts::Requirement *> Requirements,
+    SourceLocation RBraceLoc) {
   void *Mem =
       C.Allocate(totalSizeToAlloc<ParmVarDecl *, concepts::Requirement *>(
                      LocalParameters.size(), Requirements.size()),
                  alignof(RequiresExpr));
-  return new (Mem) RequiresExpr(C, RequiresKWLoc, Body, LocalParameters,
-                                Requirements, RBraceLoc);
+  return new (Mem)
+      RequiresExpr(C, RequiresKWLoc, Body, LParenLoc, LocalParameters,
+                   RParenLoc, Requirements, RBraceLoc);
 }
 
 RequiresExpr *

@@ -471,8 +471,7 @@ define i32 @commute_to_fix_ordering(i32 %arg) {
 ; CHECK-LABEL: multiple_defs:
 ; CHECK:        f64.add         $push[[NUM0:[0-9]+]]=, ${{[0-9]+}}, $pop{{[0-9]+}}{{$}}
 ; CHECK-NEXT:   local.tee       $push[[NUM1:[0-9]+]]=, $[[NUM2:[0-9]+]]=, $pop[[NUM0]]{{$}}
-; CHECK-NEXT:   f64.select      $push{{[0-9]+}}=, $pop{{[0-9]+}}, $pop[[NUM1]], ${{[0-9]+}}{{$}}
-; CHECK:        $[[NUM2]]=,
+; CHECK-NEXT:   f64.select      ${{[0-9]+}}=, $pop{{[0-9]+}}, $pop[[NUM1]], ${{[0-9]+}}{{$}}
 ; NOREGS-LABEL: multiple_defs:
 ; NOREGS:        f64.add
 ; NOREGS:        local.tee
@@ -644,13 +643,13 @@ define i32 @stackpointer_dependency(ptr readnone) {
 ; CHECK-NEXT: local.tee $push[[L3:.+]]=, $0=, $pop[[L4]]
 ; CHECK-NEXT: i32.load  $push[[L0:.+]]=, 0($0)
 ; CHECK-NEXT: i32.load  $push[[L1:.+]]=, 0($pop[[L0]])
-; CHECK-NEXT: call_indirect $push{{.+}}=, $pop[[L3]], $1, $pop[[L1]]
+; CHECK-NEXT: call_indirect __indirect_function_table, (i32, i32) -> (i32), $push{{.+}}=, $pop[[L3]], $1, $pop[[L1]]
 ; NOREGS-LABEL: call_indirect_stackify:
 ; NOREGS: i32.load  0
 ; NOREGS-NEXT: local.tee 0
 ; NOREGS:      i32.load  0
 ; NOREGS-NEXT: i32.load  0
-; NOREGS-NEXT: call_indirect (i32, i32) -> (i32)
+; NOREGS-NEXT: call_indirect __indirect_function_table, (i32, i32) -> (i32)
 %class.call_indirect = type { ptr }
 define i32 @call_indirect_stackify(ptr %objptr, i32 %arg) {
   %obj = load ptr, ptr %objptr

@@ -115,14 +115,12 @@
 
 #include "mlir/Transforms/CFGToSCF.h"
 
-#include "mlir/IR/RegionGraphTraits.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallPtrSet.h"
 
 using namespace mlir;
 
@@ -135,6 +133,13 @@ getMutableSuccessorOperands(Block *block, unsigned successorIndex) {
   SuccessorOperands succOps =
       branchOpInterface.getSuccessorOperands(successorIndex);
   return succOps.getMutableForwardedOperands();
+}
+
+/// Return the operand range used to transfer operands from `block` to its
+/// successor with the given index.
+static OperandRange getSuccessorOperands(Block *block,
+                                         unsigned successorIndex) {
+  return getMutableSuccessorOperands(block, successorIndex);
 }
 
 /// Appends all the block arguments from `other` to the block arguments of
@@ -175,8 +180,14 @@ public:
 
   /// Returns the arguments of this edge that are passed to the block arguments
   /// of the successor.
-  MutableOperandRange getSuccessorOperands() const {
-    return getMutableSuccessorOperands(fromBlock, successorIndex);
+  MutableOperandRange getMutableSuccessorOperands() const {
+    return ::getMutableSuccessorOperands(fromBlock, successorIndex);
+  }
+
+  /// Returns the arguments of this edge that are passed to the block arguments
+  /// of the successor.
+  OperandRange getSuccessorOperands() const {
+    return ::getSuccessorOperands(fromBlock, successorIndex);
   }
 };
 
@@ -262,7 +273,7 @@ public:
     assert(result != blockArgMapping.end() &&
            "Edge was not originally passed to `create` method.");
 
-    MutableOperandRange successorOperands = edge.getSuccessorOperands();
+    MutableOperandRange successorOperands = edge.getMutableSuccessorOperands();
 
     // Extra arguments are always appended at the end of the block arguments.
     unsigned extraArgsBeginIndex =
@@ -277,7 +288,8 @@ public:
       if (index >= result->second &&
           index < result->second + edge.getSuccessor()->getNumArguments()) {
         // Original block arguments to the entry block.
-        newSuccOperands[index] = successorOperands[index - result->second];
+        newSuccOperands[index] =
+            successorOperands[index - result->second].get();
         continue;
       }
 
@@ -413,8 +425,7 @@ public:
   /// region with an instance of `returnLikeOp`s kind.
   void combineExit(Operation *returnLikeOp,
                    function_ref<Value(unsigned)> getSwitchValue) {
-    auto [iter, inserted] =
-        returnLikeToCombinedExit.insert({returnLikeOp, nullptr});
+    auto [iter, inserted] = returnLikeToCombinedExit.try_emplace(returnLikeOp);
     if (!inserted && iter->first == returnLikeOp)
       return;
 
@@ -587,7 +598,7 @@ static FailureOr<StructuredLoopProperties> createSingleExitingLatch(
   {
     auto builder = OpBuilder::atBlockBegin(latchBlock);
     interface.createConditionalBranch(
-        builder.getUnknownLoc(), builder, shouldRepeat, loopHeader,
+        loc, builder, shouldRepeat, loopHeader,
         latchBlock->getArguments().take_front(loopHeader->getNumArguments()),
         /*falseDest=*/exitBlock,
         /*falseArgs=*/{});
@@ -665,7 +676,7 @@ transformToReduceLoop(Block *loopHeader, Block *exitBlock,
   // invalidated when mutating the operands through a different
   // `MutableOperandRange` of the same operation.
   SmallVector<Value> loopHeaderSuccessorOperands =
-      llvm::to_vector(getMutableSuccessorOperands(latch, loopHeaderIndex));
+      llvm::to_vector(getSuccessorOperands(latch, loopHeaderIndex));
 
   // Add all values used in the next iteration to the exit block. Replace
   // any uses that are outside the loop with the newly created exit block.
@@ -696,7 +707,7 @@ transformToReduceLoop(Block *loopHeader, Block *exitBlock,
     llvm::SmallDenseMap<Block *, bool> dominanceCache;
     // Returns true if `loopBlock` dominates `block`.
     auto loopBlockDominates = [&](Block *block) {
-      auto [iter, inserted] = dominanceCache.insert({block, false});
+      auto [iter, inserted] = dominanceCache.try_emplace(block);
       if (!inserted)
         return iter->second;
       iter->second = dominanceInfo.dominates(loopBlock, block);
@@ -706,7 +717,13 @@ transformToReduceLoop(Block *loopHeader, Block *exitBlock,
     auto checkValue = [&](Value value) {
       Value blockArgument;
       for (OpOperand &use : llvm::make_early_inc_range(value.getUses())) {
-        if (loopBlocks.contains(use.getOwner()->getBlock()))
+        // Go through all the parent blocks and find the one part of the region
+        // of the loop. If the block is part of the loop, then the value does
+        // not escape the loop through this use.
+        Block *currBlock = use.getOwner()->getBlock();
+        while (currBlock && currBlock->getParent() != loopHeader->getParent())
+          currBlock = currBlock->getParentOp()->getBlock();
+        if (loopBlocks.contains(currBlock))
           continue;
 
         // Block argument is only created the first time it is required.
@@ -741,7 +758,7 @@ transformToReduceLoop(Block *loopHeader, Block *exitBlock,
 
           loopHeaderSuccessorOperands.push_back(argument);
           for (Edge edge : successorEdges(latch))
-            edge.getSuccessorOperands().append(argument);
+            edge.getMutableSuccessorOperands().append(argument);
         }
 
         use.set(blockArgument);
@@ -938,9 +955,8 @@ static FailureOr<SmallVector<Block *>> transformToStructuredCFBranches(
   if (regionEntry->getNumSuccessors() == 1) {
     // Single successor we can just splice together.
     Block *successor = regionEntry->getSuccessor(0);
-    for (auto &&[oldValue, newValue] :
-         llvm::zip(successor->getArguments(),
-                   getMutableSuccessorOperands(regionEntry, 0)))
+    for (auto &&[oldValue, newValue] : llvm::zip(
+             successor->getArguments(), getSuccessorOperands(regionEntry, 0)))
       oldValue.replaceAllUsesWith(newValue);
     regionEntry->getTerminator()->erase();
 
@@ -1140,8 +1156,20 @@ static FailureOr<SmallVector<Block *>> transformToStructuredCFBranches(
     FailureOr<Operation *> result = interface.createStructuredBranchRegionOp(
         opBuilder, regionEntry->getTerminator(),
         continuation->getArgumentTypes(), conditionalRegions);
-    if (failed(result))
+    if (failed(result)) {
+      // Blocks were moved from the parent region into conditionalRegions before
+      // calling createStructuredBranchRegionOp. On failure, move them back to
+      // avoid use-after-free crashes: the moved blocks may still be referenced
+      // as successors by blocks remaining in the parent region, so destroying
+      // conditionalRegions with live uses would trigger an assertion.
+      // This patching does not undo the change, it barely makes it so that the
+      // pass can gracefully fail instead of crashing.
+      Region *parentRegion = regionEntry->getParent();
+      for (Region &conditionalRegion : conditionalRegions)
+        parentRegion->getBlocks().splice(parentRegion->getBlocks().end(),
+                                         conditionalRegion.getBlocks());
       return failure();
+    }
     structuredCondOp = *result;
     regionEntry->getTerminator()->erase();
   }
@@ -1164,8 +1192,7 @@ static FailureOr<SmallVector<Block *>> transformToStructuredCFBranches(
     auto builder = OpBuilder::atBlockTerminator(user->getBlock());
     LogicalResult result = interface.createStructuredBranchRegionTerminatorOp(
         user->getLoc(), builder, structuredCondOp, user,
-        static_cast<OperandRange>(
-            getMutableSuccessorOperands(user->getBlock(), 0)));
+        getMutableSuccessorOperands(user->getBlock(), 0).getAsOperandRange());
     if (failed(result))
       return failure();
     user->erase();
@@ -1208,7 +1235,8 @@ static ReturnLikeExitCombiner createSingleExitBlocksForReturnLike(
 
 /// Checks all preconditions of the transformation prior to any transformations.
 /// Returns failure if any precondition is violated.
-static LogicalResult checkTransformationPreconditions(Region &region) {
+static LogicalResult
+checkTransformationPreconditions(Region &region, CFGToSCFInterface &interface) {
   for (Block &block : region.getBlocks())
     if (block.hasNoPredecessors() && !block.isEntryBlock())
       return block.front().emitOpError(
@@ -1252,7 +1280,21 @@ static LogicalResult checkTransformationPreconditions(Region &region) {
     }
     return WalkResult::advance();
   });
-  return failure(result.wasInterrupted());
+  if (result.wasInterrupted())
+    return failure();
+
+  // Verify all multi-successor terminators are convertible before touching IR.
+  for (Block &block : region.getBlocks()) {
+    if (block.getNumSuccessors() <= 1)
+      continue;
+    Operation *terminator = block.getTerminator();
+    if (!interface.canConvertMultiSuccessorBranchOp(terminator)) {
+      terminator->emitOpError(
+          "cannot convert unknown control flow op to structured control flow");
+      return failure();
+    }
+  }
+  return success();
 }
 
 FailureOr<bool> mlir::transformCFGToSCF(Region &region,
@@ -1261,12 +1303,12 @@ FailureOr<bool> mlir::transformCFGToSCF(Region &region,
   if (region.empty() || region.hasOneBlock())
     return false;
 
-  if (failed(checkTransformationPreconditions(region)))
+  if (failed(checkTransformationPreconditions(region, interface)))
     return failure();
 
   DenseMap<Type, Value> typedUndefCache;
   auto getUndefValue = [&](Type type) {
-    auto [iter, inserted] = typedUndefCache.insert({type, nullptr});
+    auto [iter, inserted] = typedUndefCache.try_emplace(type);
     if (!inserted)
       return iter->second;
 

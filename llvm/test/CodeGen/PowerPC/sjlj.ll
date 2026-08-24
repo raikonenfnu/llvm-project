@@ -80,8 +80,8 @@ return:                                           ; preds = %if.end, %if.then
 ; CHECK: # %bb.1:
 
 ; CHECK: .LBB1_3:
-; CHECK: ld [[REG2:[0-9]+]], [[OFF]](31)                   # 8-byte Folded Reload
 ; CHECK: mflr [[REGL:[0-9]+]]
+; CHECK: ld [[REG2:[0-9]+]], [[OFF]](31)                   # 8-byte Folded Reload
 ; CHECK: std [[REGL]], 8([[REG2]])
 ; CHECK: li 3, 0
 
@@ -171,7 +171,7 @@ declare ptr @llvm.stacksave() #3
 
 declare i32 @llvm.eh.sjlj.setjmp(ptr) #3
 
-attributes #0 = { nounwind "less-precise-fpmad"="false" "frame-pointer"="non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "unsafe-fp-math"="false" "use-soft-float"="false" }
+attributes #0 = { nounwind "less-precise-fpmad"="false" "frame-pointer"="non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "use-soft-float"="false" }
 attributes #1 = { noreturn nounwind }
 attributes #2 = { nounwind readnone }
 attributes #3 = { nounwind }

@@ -13,6 +13,7 @@
 
 #include "llvm/CodeGen/GlobalISel/InlineAsmLowering.h"
 #include "llvm/CodeGen/GlobalISel/MachineIRBuilder.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetLowering.h"
@@ -50,6 +51,8 @@ public:
       Flags |= InlineAsm::Extra_HasSideEffects;
     if (IA->isAlignStack())
       Flags |= InlineAsm::Extra_IsAlignStack;
+    if (IA->canThrow())
+      Flags |= InlineAsm::Extra_MayUnwind;
     if (CB.isConvergent())
       Flags |= InlineAsm::Extra_IsConvergent;
     Flags |= IA->getDialect() * InlineAsm::Extra_AsmDialect;
@@ -133,71 +136,6 @@ static void getRegistersForValue(MachineFunction &MF,
   }
 }
 
-/// Return an integer indicating how general CT is.
-static unsigned getConstraintGenerality(TargetLowering::ConstraintType CT) {
-  switch (CT) {
-  case TargetLowering::C_Immediate:
-  case TargetLowering::C_Other:
-  case TargetLowering::C_Unknown:
-    return 0;
-  case TargetLowering::C_Register:
-    return 1;
-  case TargetLowering::C_RegisterClass:
-    return 2;
-  case TargetLowering::C_Memory:
-  case TargetLowering::C_Address:
-    return 3;
-  }
-  llvm_unreachable("Invalid constraint type");
-}
-
-static void chooseConstraint(TargetLowering::AsmOperandInfo &OpInfo,
-                             const TargetLowering *TLI) {
-  assert(OpInfo.Codes.size() > 1 && "Doesn't have multiple constraint options");
-  unsigned BestIdx = 0;
-  TargetLowering::ConstraintType BestType = TargetLowering::C_Unknown;
-  int BestGenerality = -1;
-
-  // Loop over the options, keeping track of the most general one.
-  for (unsigned i = 0, e = OpInfo.Codes.size(); i != e; ++i) {
-    TargetLowering::ConstraintType CType =
-        TLI->getConstraintType(OpInfo.Codes[i]);
-
-    // Indirect 'other' or 'immediate' constraints are not allowed.
-    if (OpInfo.isIndirect && !(CType == TargetLowering::C_Memory ||
-                               CType == TargetLowering::C_Register ||
-                               CType == TargetLowering::C_RegisterClass))
-      continue;
-
-    // If this is an 'other' or 'immediate' constraint, see if the operand is
-    // valid for it. For example, on X86 we might have an 'rI' constraint. If
-    // the operand is an integer in the range [0..31] we want to use I (saving a
-    // load of a register), otherwise we must use 'r'.
-    if (CType == TargetLowering::C_Other ||
-        CType == TargetLowering::C_Immediate) {
-      assert(OpInfo.Codes[i].size() == 1 &&
-             "Unhandled multi-letter 'other' constraint");
-      // FIXME: prefer immediate constraints if the target allows it
-    }
-
-    // Things with matching constraints can only be registers, per gcc
-    // documentation.  This mainly affects "g" constraints.
-    if (CType == TargetLowering::C_Memory && OpInfo.hasMatchingInput())
-      continue;
-
-    // This constraint letter is more general than the previous one, use it.
-    int Generality = getConstraintGenerality(CType);
-    if (Generality > BestGenerality) {
-      BestType = CType;
-      BestIdx = i;
-      BestGenerality = Generality;
-    }
-  }
-
-  OpInfo.ConstraintCode = OpInfo.Codes[BestIdx];
-  OpInfo.ConstraintType = BestType;
-}
-
 static void computeConstraintToUse(const TargetLowering *TLI,
                                    TargetLowering::AsmOperandInfo &OpInfo) {
   assert(!OpInfo.Codes.empty() && "Must have at least one constraint");
@@ -207,7 +145,18 @@ static void computeConstraintToUse(const TargetLowering *TLI,
     OpInfo.ConstraintCode = OpInfo.Codes[0];
     OpInfo.ConstraintType = TLI->getConstraintType(OpInfo.ConstraintCode);
   } else {
-    chooseConstraint(OpInfo, TLI);
+    TargetLowering::ConstraintGroup G = TLI->getConstraintPreferences(OpInfo);
+    if (G.empty())
+      return;
+    // FIXME: prefer immediate constraints if the target allows it
+    unsigned BestIdx = 0;
+    for (const unsigned E = G.size();
+         BestIdx < E && (G[BestIdx].second == TargetLowering::C_Other ||
+                         G[BestIdx].second == TargetLowering::C_Immediate);
+         ++BestIdx)
+      ;
+    OpInfo.ConstraintCode = G[BestIdx].first;
+    OpInfo.ConstraintType = G[BestIdx].second;
   }
 
   // 'X' matches anything.
@@ -277,7 +226,7 @@ bool InlineAsmLowering::lowerInlineAsm(
 
   MachineFunction &MF = MIRBuilder.getMF();
   const Function &F = MF.getFunction();
-  const DataLayout &DL = F.getParent()->getDataLayout();
+  const DataLayout &DL = F.getDataLayout();
   const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
 
   MachineRegisterInfo *MRI = MIRBuilder.getMRI();
@@ -294,7 +243,7 @@ bool InlineAsmLowering::lowerInlineAsm(
 
     // Compute the value type for each operand.
     if (OpInfo.hasArg()) {
-      OpInfo.CallOperandVal = const_cast<Value *>(Call.getArgOperand(ArgNo));
+      OpInfo.CallOperandVal = Call.getArgOperand(ArgNo);
 
       if (isa<BasicBlock>(OpInfo.CallOperandVal)) {
         LLVM_DEBUG(dbgs() << "Basic block input operands not supported yet\n");
@@ -351,7 +300,7 @@ bool InlineAsmLowering::lowerInlineAsm(
   // Create the MachineInstr, but don't insert it yet since input
   // operands still need to insert instructions before this one
   auto Inst = MIRBuilder.buildInstrNoInsert(TargetOpcode::INLINEASM)
-                  .addExternalSymbol(IA->getAsmString().c_str())
+                  .addExternalSymbol(IA->getAsmString().data())
                   .addImm(ExtraInfo.get());
 
   // Starting from this operand: flag followed by register(s) will be added as
@@ -373,9 +322,9 @@ bool InlineAsmLowering::lowerInlineAsm(
     switch (OpInfo.Type) {
     case InlineAsm::isOutput:
       if (OpInfo.ConstraintType == TargetLowering::C_Memory) {
-        unsigned ConstraintID =
+        const InlineAsm::ConstraintCode ConstraintID =
             TLI->getInlineAsmMemConstraint(OpInfo.ConstraintCode);
-        assert(ConstraintID != InlineAsm::Constraint_Unknown &&
+        assert(ConstraintID != InlineAsm::ConstraintCode::Unknown &&
                "Failed to convert memory constraint code to constraint id.");
 
         // Add information to the INLINEASM instruction to know about this
@@ -421,9 +370,9 @@ bool InlineAsmLowering::lowerInlineAsm(
         Inst.addImm(Flag);
 
         for (Register Reg : OpInfo.Regs) {
-          Inst.addReg(Reg,
-                      RegState::Define | getImplRegState(Reg.isPhysical()) |
-                          (OpInfo.isEarlyClobber ? RegState::EarlyClobber : 0));
+          Inst.addReg(Reg, RegState::Define |
+                               getImplRegState(Reg.isPhysical()) |
+                               getEarlyClobberRegState(OpInfo.isEarlyClobber));
         }
 
         // Remember this output operand for later processing
@@ -459,14 +408,23 @@ bool InlineAsmLowering::lowerInlineAsm(
         ArrayRef<Register> SrcRegs = GetOrCreateVRegs(*OpInfo.CallOperandVal);
         assert(SrcRegs.size() == 1 && "Single register is expected here");
 
-        // When Def is physreg: use given input.
-        Register In = SrcRegs[0];
-        // When Def is vreg: copy input to new vreg with same reg class as Def.
-        if (Def.isVirtual()) {
-          In = MRI->createVirtualRegister(MRI->getRegClass(Def));
-          if (!buildAnyextOrCopy(In, SrcRegs[0], MIRBuilder))
-            return false;
-        }
+        // We need the tied input to live in the same register class as the def.
+        //
+        // - if Def is a vreg, we can just use its regclass.
+        // - if Def is a physreg, create a vreg in the minimal regclass for that
+        //   physreg.
+        //
+        // Otherwise RegBankSelect may leave it in the wrong bank (e.g. GPR even
+        // though it's tied to an FP physreg).
+        const TargetRegisterClass *RC = Def.isVirtual()
+                                            ? MRI->getRegClass(Def)
+                                            : TRI->getMinimalPhysRegClass(Def);
+
+        // Materialize `In` in a new vreg that has a register class that matches
+        // the register class of `Def`.
+        Register In = MRI->createVirtualRegister(RC);
+        if (!buildAnyextOrCopy(In, SrcRegs[0], MIRBuilder))
+          return false;
 
         // Add Flag and input register operand (In) to Inst. Tie In to Def.
         InlineAsm::Flag UseFlag(InlineAsm::Kind::RegUse, 1);
@@ -508,26 +466,52 @@ bool InlineAsmLowering::lowerInlineAsm(
       }
 
       if (OpInfo.ConstraintType == TargetLowering::C_Memory) {
-
-        if (!OpInfo.isIndirect) {
-          LLVM_DEBUG(dbgs()
-                     << "Cannot indirectify memory input operands yet\n");
-          return false;
-        }
-
-        assert(OpInfo.isIndirect && "Operand must be indirect to be a mem!");
-
-        unsigned ConstraintID =
+        const InlineAsm::ConstraintCode ConstraintID =
             TLI->getInlineAsmMemConstraint(OpInfo.ConstraintCode);
         InlineAsm::Flag OpFlags(InlineAsm::Kind::Mem, 1);
         OpFlags.setMemConstraint(ConstraintID);
         Inst.addImm(OpFlags);
+
+        if (OpInfo.isIndirect) {
+          // already indirect
+          ArrayRef<Register> SourceRegs =
+              GetOrCreateVRegs(*OpInfo.CallOperandVal);
+          if (SourceRegs.size() != 1) {
+            LLVM_DEBUG(dbgs() << "Expected the memory input to fit into a "
+                                 "single virtual register "
+                                 "for constraint '"
+                              << OpInfo.ConstraintCode << "'\n");
+            return false;
+          }
+          Inst.addReg(SourceRegs[0]);
+          break;
+        }
+
+        // Needs to be made indirect. Store the value on the stack and use
+        // a pointer to it.
+        Value *OpVal = OpInfo.CallOperandVal;
+        TypeSize Bytes = DL.getTypeStoreSize(OpVal->getType());
+        Align Alignment = DL.getPrefTypeAlign(OpVal->getType());
+        int FrameIdx =
+            MF.getFrameInfo().CreateStackObject(Bytes, Alignment, false);
+
+        unsigned AddrSpace = DL.getAllocaAddrSpace();
+        LLT FramePtrTy =
+            LLT::pointer(AddrSpace, DL.getPointerSizeInBits(AddrSpace));
+        auto Ptr = MIRBuilder.buildFrameIndex(FramePtrTy, FrameIdx).getReg(0);
         ArrayRef<Register> SourceRegs =
             GetOrCreateVRegs(*OpInfo.CallOperandVal);
-        assert(
-            SourceRegs.size() == 1 &&
-            "Expected the memory input to fit into a single virtual register");
-        Inst.addReg(SourceRegs[0]);
+        if (SourceRegs.size() != 1) {
+          LLVM_DEBUG(dbgs() << "Expected the memory input to fit into a single "
+                               "virtual register "
+                               "for constraint '"
+                            << OpInfo.ConstraintCode << "'\n");
+          return false;
+        }
+        MIRBuilder.buildStore(SourceRegs[0], Ptr,
+                              MachinePointerInfo::getFixedStack(MF, FrameIdx),
+                              Alignment);
+        Inst.addReg(Ptr);
         break;
       }
 
@@ -592,8 +576,23 @@ bool InlineAsmLowering::lowerInlineAsm(
     }
   }
 
+  if (auto Bundle = Call.getOperandBundle(LLVMContext::OB_convergencectrl)) {
+    auto *Token = Bundle->Inputs[0].get();
+    ArrayRef<Register> SourceRegs = GetOrCreateVRegs(*Token);
+    assert(SourceRegs.size() == 1 &&
+           "Expected the control token to fit into a single virtual register");
+    Inst.addUse(SourceRegs[0], RegState::Implicit);
+  }
+
   if (const MDNode *SrcLoc = Call.getMetadata("srcloc"))
     Inst.addMetadata(SrcLoc);
+
+  // Add rounding control registers as implicit def for inline asm.
+  if (MF.getFunction().hasFnAttribute(Attribute::StrictFP)) {
+    ArrayRef<MCPhysReg> RCRegs = TLI->getRoundingControlRegisters();
+    for (MCPhysReg Reg : RCRegs)
+      Inst.addReg(Reg, RegState::ImplicitDefine);
+  }
 
   // All inputs are handled, insert the instruction now
   MIRBuilder.insertInstr(Inst);
@@ -669,7 +668,18 @@ bool InlineAsmLowering::lowerAsmOperandForConstraint(
   switch (ConstraintLetter) {
   default:
     return false;
+  case 's': // Integer immediate not known at compile time
+    if (const auto *GV = dyn_cast<GlobalValue>(Val)) {
+      Ops.push_back(MachineOperand::CreateGA(GV, /*Offset=*/0));
+      return true;
+    }
+    return false;
   case 'i': // Simple Integer or Relocatable Constant
+    if (const auto *GV = dyn_cast<GlobalValue>(Val)) {
+      Ops.push_back(MachineOperand::CreateGA(GV, /*Offset=*/0));
+      return true;
+    }
+    [[fallthrough]];
   case 'n': // immediate integer with a known value.
     if (ConstantInt *CI = dyn_cast<ConstantInt>(Val)) {
       assert(CI->getBitWidth() <= 64 &&

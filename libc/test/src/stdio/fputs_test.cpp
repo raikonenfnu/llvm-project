@@ -8,6 +8,8 @@
 
 #include "src/__support/File/file.h"
 #include "src/stdio/fputs.h"
+#include "src/stdio/stderr.h"
+#include "src/stdio/stdout.h"
 
 #include "test/UnitTest/Test.h"
 
@@ -15,12 +17,12 @@ TEST(LlvmLibcPutsTest, PrintOut) {
   int result;
 
   constexpr char simple[] = "A simple string written to stdout\n";
-  result =
-      __llvm_libc::fputs(simple, reinterpret_cast<FILE *>(__llvm_libc::stdout));
+  result = LIBC_NAMESPACE::fputs(
+      simple, reinterpret_cast<FILE *>(LIBC_NAMESPACE::stdout));
   EXPECT_GE(result, 0);
 
   constexpr char more[] = "A simple string written to stderr\n";
-  result =
-      __llvm_libc::fputs(more, reinterpret_cast<FILE *>(__llvm_libc::stderr));
+  result = LIBC_NAMESPACE::fputs(
+      more, reinterpret_cast<FILE *>(LIBC_NAMESPACE::stderr));
   EXPECT_GE(result, 0);
 }

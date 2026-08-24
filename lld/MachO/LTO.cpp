@@ -13,8 +13,8 @@
 #include "Symbols.h"
 #include "Target.h"
 
-#include "lld/Common/Args.h"
 #include "lld/Common/CommonLinkerContext.h"
+#include "lld/Common/Filesystem.h"
 #include "lld/Common/Strings.h"
 #include "lld/Common/TargetOptionsCommandFlags.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
@@ -24,26 +24,12 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Transforms/ObjCARC.h"
 
 using namespace lld;
 using namespace lld::macho;
 using namespace llvm;
 using namespace llvm::MachO;
 using namespace llvm::sys;
-
-// Creates an empty file to store a list of object files for final
-// linking of distributed ThinLTO.
-static std::unique_ptr<raw_fd_ostream> openFile(StringRef file) {
-  std::error_code ec;
-  auto ret =
-      std::make_unique<raw_fd_ostream>(file, ec, sys::fs::OpenFlags::OF_None);
-  if (ec) {
-    error("cannot open " + file + ": " + ec.message());
-    return nullptr;
-  }
-  return ret;
-}
 
 static std::string getThinLTOOutputFile(StringRef modulePath) {
   return lto::getThinLTOOutputFile(modulePath, config->thinLTOPrefixReplaceOld,
@@ -56,13 +42,13 @@ static lto::Config createConfig() {
   c.Options.EmitAddrsig = config->icfLevel == ICFLevel::safe;
   for (StringRef C : config->mllvmOpts)
     c.MllvmArgs.emplace_back(C.str());
+  for (StringRef pluginFn : config->passPlugins)
+    c.PassPluginFilenames.push_back(std::string(pluginFn));
+  c.OptPipeline = std::string(config->ltoNewPmPasses);
   c.CodeModel = getCodeModelFromCMModel();
   c.CPU = getCPUStr();
   c.MAttrs = getMAttrs();
   c.DiagHandler = diagnosticHandler;
-  c.PreCodeGenPassesHook = [](legacy::PassManager &pm) {
-    pm.add(createObjCARCContractPass());
-  };
 
   c.AlwaysEmitRegularLTOObj = !config->ltoObjPath.empty();
 
@@ -72,11 +58,26 @@ static lto::Config createConfig() {
   c.CSIRProfile = std::string(config->csProfilePath);
   c.RunCSIRInstr = config->csProfileGenerate;
   c.PGOWarnMismatch = config->pgoWarnMismatch;
+  c.DisableVerify = config->disableVerify;
   c.OptLevel = config->ltoo;
   c.CGOptLevel = config->ltoCgo;
+
+  c.PTO.LoopVectorization = c.OptLevel > 1;
+  c.PTO.SLPVectorization = c.OptLevel > 1;
+
   if (config->saveTemps)
     checkError(c.addSaveTemps(config->outputFile.str() + ".",
                               /*UseInputModulePath=*/true));
+
+  if (config->emitLLVM) {
+    llvm::StringRef outputFile = config->outputFile;
+    c.PreCodeGenModuleHook = [outputFile](size_t task, const Module &m) {
+      if (std::unique_ptr<raw_fd_ostream> os = openLTOOutputFile(outputFile))
+        WriteBitcodeToFile(m, *os, false);
+      return false;
+    };
+  }
+
   return c;
 }
 
@@ -85,6 +86,11 @@ static lto::Config createConfig() {
 static void saveOrHardlinkBuffer(StringRef buffer, const Twine &path,
                                  std::optional<StringRef> originalPath) {
   if (originalPath) {
+    // Delete the hardlink if it exists. Otherwise, it is possible for the
+    // create_hard_link to fail (as the hardlink exists already), and when
+    // saveBuffer is subsequently called the hardlink'd file may get truncated
+    // and reading from it causes a crash.
+    fs::remove(path);
     auto err = fs::create_hard_link(*originalPath, path);
     if (!err)
       return;
@@ -102,6 +108,7 @@ BitcodeCompiler::BitcodeCompiler() {
   auto onIndexWrite = [&](StringRef S) { thinIndices.erase(S); };
   if (config->thinLTOIndexOnly) {
     backend = lto::createWriteIndexesThinBackend(
+        llvm::hardware_concurrency(config->thinLTOJobs),
         std::string(config->thinLTOPrefixReplaceOld),
         std::string(config->thinLTOPrefixReplaceNew),
         std::string(config->thinLTOPrefixReplaceNativeObject),
@@ -276,7 +283,8 @@ std::vector<ObjFile *> BitcodeCompiler::compile() {
   }
 
   if (!config->thinLTOCacheDir.empty())
-    pruneCache(config->thinLTOCacheDir, config->thinLTOCachePolicy, files);
+    check(
+        pruneCache(config->thinLTOCacheDir, config->thinLTOCachePolicy, files));
 
   std::vector<ObjFile *> ret;
   for (unsigned i = 0; i < maxTasks; ++i) {

@@ -62,7 +62,7 @@ TEST(BLAKE3Test, BLAKE3) {
             "616F575A1B58D4C9797D4217B9730AE5E6EB319D76EDEF6549B46F4EFE31FF8B");
 
   // Using generic HashBuilder.
-  HashBuilder<BLAKE3, support::endianness::native> HashBuilder;
+  HashBuilder<BLAKE3, llvm::endianness::native> HashBuilder;
   HashBuilder.update(std::get<0>(testvectors[2]));
   BLAKE3Result<> HBHash1 = HashBuilder.final();
   BLAKE3Result<> HBHash2 = HashBuilder.result();
@@ -84,12 +84,43 @@ TEST(BLAKE3Test, SmallerHashSize) {
   EXPECT_EQ(hashStr1, "6437B3AC38465133FFB63B75273A8DB5");
 
   // Using generic HashBuilder.
-  HashBuilder<TruncatedBLAKE3<16>, support::endianness::native> HashBuilder;
+  HashBuilder<TruncatedBLAKE3<16>, llvm::endianness::native> HashBuilder;
   HashBuilder.update(Input);
   BLAKE3Result<16> hash3 = HashBuilder.final();
   BLAKE3Result<16> hash4 = HashBuilder.result();
   EXPECT_EQ(hashStr1, toHex(hash3));
   EXPECT_EQ(hashStr1, toHex(hash4));
+}
+
+TEST(BLAKE3Test, InitKeyed) {
+  const char *InputStr = "abc";
+  ArrayRef<uint8_t> Input(reinterpret_cast<const uint8_t *>(InputStr),
+                          strlen(InputStr));
+  BLAKE3 Hash1;
+  uint8_t key1[32] = {0};
+  key1[0] = 'a';
+  key1[1] = 'b';
+  key1[2] = 'c';
+  key1[3] = 'd';
+  Hash1.init_keyed(key1);
+  Hash1.update(Input);
+  auto hash1 = Hash1.final<16>();
+  auto hashStr1 = toHex(hash1);
+
+  BLAKE3 Hash2;
+  uint8_t key2[32] = {0};
+  key2[0] = 'x';
+  key2[1] = 'y';
+  key2[2] = 'z';
+  key2[3] = 't';
+  Hash2.init_keyed(key2);
+  Hash2.update(Input);
+  auto hash2 = Hash2.final<16>();
+  auto hashStr2 = toHex(hash2);
+
+  ASSERT_NE(hashStr1, hashStr2);
+  EXPECT_EQ(hashStr1, "667DB3821E1AAABA03ADFE1F4F803DF7");
+  EXPECT_EQ(hashStr2, "B683D7EB0B441AC11FCAC1199B911053");
 }
 
 } // namespace

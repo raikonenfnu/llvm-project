@@ -14,6 +14,8 @@
 #define MLIR_DIALECT_GPU_IR_COMPILATIONINTERFACES_H
 
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "llvm/IR/Module.h"
 
 namespace llvm {
 class IRBuilderBase;
@@ -25,6 +27,9 @@ namespace LLVM {
 class ModuleTranslation;
 }
 namespace gpu {
+enum class CompilationTarget : uint32_t;
+constexpr StringLiteral elfSectionName = "section";
+
 /// This class indicates that the attribute associated with this trait is a GPU
 /// offloading translation attribute. These kinds of attributes must implement
 /// an interface for handling the translation of GPU offloading operations like
@@ -42,27 +47,19 @@ class OffloadingTranslationAttrTrait
 /// ensure type safeness. Targets are free to ignore these options.
 class TargetOptions {
 public:
-  /// The target representation of the compilation process.
-  typedef enum {
-    offload = 1,  /// The process should produce an offloading representation.
-                  /// For the NVVM & ROCDL targets this option produces LLVM IR.
-    assembly = 2, /// The process should produce assembly code.
-    binary = 4,   /// The process should produce a binary.
-    fatbinary = 8, /// The process should produce a fat binary.
-    binOrFatbin =
-        binary |
-        fatbinary, /// The process should produce a binary or fatbinary. It's up
-                   /// to the target to decide which.
-  } CompilationTarget;
-
   /// Constructor initializing the toolkit path, the list of files to link to,
   /// extra command line options, the compilation target and a callback for
   /// obtaining the parent symbol table. The default compilation target is
-  /// `binOrFatbin`.
-  TargetOptions(StringRef toolkitPath = {},
-                ArrayRef<std::string> linkFiles = {}, StringRef cmdOptions = {},
-                CompilationTarget compilationTarget = binOrFatbin,
-                function_ref<SymbolTable *()> getSymbolTableCallback = {});
+  /// `Fatbin`.
+  TargetOptions(
+      StringRef toolkitPath = {}, ArrayRef<Attribute> librariesToLink = {},
+      StringRef cmdOptions = {}, StringRef elfSection = {},
+      CompilationTarget compilationTarget = getDefaultCompilationTarget(),
+      function_ref<SymbolTable *()> getSymbolTableCallback = {},
+      function_ref<void(llvm::Module &)> initialLlvmIRCallback = {},
+      function_ref<void(llvm::Module &)> linkedLlvmIRCallback = {},
+      function_ref<void(llvm::Module &)> optimizedLlvmIRCallback = {},
+      function_ref<void(StringRef)> isaCallback = {});
 
   /// Returns the typeID.
   TypeID getTypeID() const;
@@ -70,15 +67,24 @@ public:
   /// Returns the toolkit path.
   StringRef getToolkitPath() const;
 
-  /// Returns the files to link to.
-  ArrayRef<std::string> getLinkFiles() const;
+  /// Returns the LLVM libraries to link to.
+  ArrayRef<Attribute> getLibrariesToLink() const;
 
   /// Returns the command line options.
   StringRef getCmdOptions() const;
 
+  /// Returns the ELF section.
+  StringRef getELFSection() const;
+
   /// Returns a tokenization of the command line options.
   std::pair<llvm::BumpPtrAllocator, SmallVector<const char *>>
   tokenizeCmdOptions() const;
+
+  /// Returns a tokenization of the substr of the command line options that
+  /// starts with `startsWith` and ends with end of the command line options and
+  /// consumes it.
+  std::pair<llvm::BumpPtrAllocator, SmallVector<const char *>>
+  tokenizeAndRemoveSuffixCmdOptions(llvm::StringRef startsWith);
 
   /// Returns the compilation target.
   CompilationTarget getCompilationTarget() const;
@@ -90,34 +96,99 @@ public:
   /// table.
   SymbolTable *getSymbolTable() const;
 
+  /// Returns the callback invoked with the initial LLVM IR for the device
+  /// module.
+  function_ref<void(llvm::Module &)> getInitialLlvmIRCallback() const;
+
+  /// Returns the callback invoked with LLVM IR for the device module
+  /// after linking the device libraries.
+  function_ref<void(llvm::Module &)> getLinkedLlvmIRCallback() const;
+
+  /// Returns the callback invoked with LLVM IR for the device module after
+  /// LLVM optimizations but before codegen.
+  function_ref<void(llvm::Module &)> getOptimizedLlvmIRCallback() const;
+
+  /// Returns the callback invoked with the target ISA for the device,
+  /// for example PTX assembly.
+  function_ref<void(StringRef)> getISACallback() const;
+
+  /// Returns the default compilation target: `CompilationTarget::Fatbin`.
+  static CompilationTarget getDefaultCompilationTarget();
+
+  /// Returns a tokenization of the command line options.
+  static std::pair<llvm::BumpPtrAllocator, SmallVector<const char *>>
+  tokenizeCmdOptions(const std::string &cmdOptions);
+
 protected:
   /// Derived classes must use this constructor to initialize `typeID` to the
   /// appropiate value: ie. `TargetOptions(TypeID::get<DerivedClass>())`.
-  TargetOptions(TypeID typeID, StringRef toolkitPath = {},
-                ArrayRef<std::string> linkFiles = {}, StringRef cmdOptions = {},
-                CompilationTarget compilationTarget = binOrFatbin,
-                function_ref<SymbolTable *()> getSymbolTableCallback = {});
+  TargetOptions(
+      TypeID typeID, StringRef toolkitPath = {},
+      ArrayRef<Attribute> librariesToLink = {}, StringRef cmdOptions = {},
+      StringRef elfSection = {},
+      CompilationTarget compilationTarget = getDefaultCompilationTarget(),
+      function_ref<SymbolTable *()> getSymbolTableCallback = {},
+      function_ref<void(llvm::Module &)> initialLlvmIRCallback = {},
+      function_ref<void(llvm::Module &)> linkedLlvmIRCallback = {},
+      function_ref<void(llvm::Module &)> optimizedLlvmIRCallback = {},
+      function_ref<void(StringRef)> isaCallback = {});
 
   /// Path to the target toolkit.
   std::string toolkitPath;
 
   /// List of files to link with the LLVM module.
-  SmallVector<std::string> linkFiles;
+  SmallVector<Attribute> librariesToLink;
 
   /// An optional set of command line options to be used by the compilation
   /// process.
   std::string cmdOptions;
 
-  /// Compilation process target representation.
+  /// ELF Section where the binary needs to be located
+  std::string elfSection;
+
+  /// Compilation process target format.
   CompilationTarget compilationTarget;
 
   /// Callback for obtaining the parent symbol table of all the GPU modules
   /// being serialized.
   function_ref<SymbolTable *()> getSymbolTableCallback;
 
+  /// Callback invoked with the initial LLVM IR for the device module.
+  function_ref<void(llvm::Module &)> initialLlvmIRCallback;
+
+  /// Callback invoked with LLVM IR for the device module after
+  /// linking the device libraries.
+  function_ref<void(llvm::Module &)> linkedLlvmIRCallback;
+
+  /// Callback invoked with LLVM IR for the device module after
+  /// LLVM optimizations but before codegen.
+  function_ref<void(llvm::Module &)> optimizedLlvmIRCallback;
+
+  /// Callback invoked with the target ISA for the device,
+  /// for example PTX assembly.
+  function_ref<void(StringRef)> isaCallback;
+
 private:
   TypeID typeID;
 };
+
+/// This class represents a serialized object (GPU binary) with metadata (e.g.
+/// timings, logs, ...).
+class SerializedObject {
+public:
+  SerializedObject(::mlir::SmallVector<char, 0> object,
+                   DictionaryAttr metadata = {})
+      : object(std::move(object)), metadata(metadata) {}
+
+  const SmallVector<char, 0> &getObject() const { return object; }
+
+  DictionaryAttr getMetadata() const { return metadata; }
+
+private:
+  SmallVector<char, 0> object;
+  DictionaryAttr metadata;
+};
+
 } // namespace gpu
 } // namespace mlir
 

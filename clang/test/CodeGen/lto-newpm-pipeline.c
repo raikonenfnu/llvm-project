@@ -25,28 +25,34 @@
 // RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -emit-llvm-bc -o /dev/null -mllvm -verify-analysis-invalidation=0 -fdebug-pass-manager -flto=thin -Oz %s 2>&1 | FileCheck %s \
 // RUN:   -check-prefix=CHECK-THIN-OPTIMIZED
 
-// CHECK-FULL-O0: Running pass: AlwaysInlinerPass
+// CHECK-FULL-O0: Running pass: VerifierPass
+// CHECK-FULL-O0-NEXT: Running analysis: VerifierAnalysis
 // CHECK-FULL-O0-NEXT: Running analysis: InnerAnalysisManagerProxy
+// CHECK-FULL-O0-NEXT: Running pass: EntryExitInstrumenterPass
+// CHECK-FULL-O0-NEXT: Running pass: AlwaysInlinerPass
 // CHECK-FULL-O0-NEXT: Running analysis: ProfileSummaryAnalysis
 // CHECK-FULL-O0-NEXT: Running pass: CoroConditionalWrapper
 // CHECK-FULL-O0-NEXT: Running pass: CanonicalizeAliasesPass
 // CHECK-FULL-O0-NEXT: Running pass: NameAnonGlobalPass
+// CHECK-FULL-O0-NEXT: Running pass: AssignGUIDPass
 // CHECK-FULL-O0-NEXT: Running pass: AnnotationRemarksPass
 // CHECK-FULL-O0-NEXT: Running analysis: TargetLibraryAnalysis
 // CHECK-FULL-O0-NEXT: Running pass: VerifierPass
-// CHECK-FULL-O0-NEXT: Running analysis: VerifierAnalysis
 // CHECK-FULL-O0-NEXT: Running pass: BitcodeWriterPass
 
-// CHECK-THIN-O0: Running pass: AlwaysInlinerPass
+// CHECK-THIN-O0: Running pass: VerifierPass
+// CHECK-THIN-O0-NEXT: Running analysis: VerifierAnalysis
 // CHECK-THIN-O0-NEXT: Running analysis: InnerAnalysisManagerProxy
+// CHECK-THIN-O0-NEXT: Running pass: EntryExitInstrumenterPass
+// CHECK-THIN-O0-NEXT: Running pass: AlwaysInlinerPass
 // CHECK-THIN-O0-NEXT: Running analysis: ProfileSummaryAnalysis
 // CHECK-THIN-O0-NEXT: Running pass: CoroConditionalWrapper
 // CHECK-THIN-O0-NEXT: Running pass: CanonicalizeAliasesPass
 // CHECK-THIN-O0-NEXT: Running pass: NameAnonGlobalPass
+// CHECK-THIN-O0-NEXT: Running pass: AssignGUIDPass
 // CHECK-THIN-O0-NEXT: Running pass: AnnotationRemarksPass
 // CHECK-THIN-O0-NEXT: Running analysis: TargetLibraryAnalysis
 // CHECK-THIN-O0-NEXT: Running pass: VerifierPass
-// CHECK-THIN-O0-NEXT: Running analysis: VerifierAnalysis
 // CHECK-THIN-O0-NEXT: Running pass: ThinLTOBitcodeWriterPass
 
 // TODO: The LTO pre-link pipeline currently invokes
@@ -60,6 +66,7 @@
 // CHECK-THIN-OPTIMIZED-NOT: Running pass: LoopVectorizePass
 // CHECK-THIN-OPTIMIZED: Running pass: CanonicalizeAliasesPass
 // CHECK-THIN-OPTIMIZED: Running pass: NameAnonGlobalPass
+// CHECK-THIN-OPTIMIZED: Running pass: AssignGUIDPass
 // CHECK-THIN-OPTIMIZED: Running pass: ThinLTOBitcodeWriterPass
 
 void Foo(void) {}

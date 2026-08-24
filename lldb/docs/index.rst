@@ -73,13 +73,21 @@ are welcome:
 * iOS, tvOS, and watchOS simulator debugging on i386, x86_64 and AArch64
 * iOS, tvOS, and watchOS device debugging on ARM and AArch64
 * Linux user-space debugging for i386, x86_64, ARM, AArch64, PPC64le, s390x
-* FreeBSD user-space debugging for i386, x86_64, ARM, AArch64, MIPS64, PPC
+* FreeBSD user-space debugging for i386, x86_64, ARM, AArch64, PPC
+* FreeBSD kernel debugging for i386, x86_64, ARM, AArch64, PPC64le, RISCV64
 * NetBSD user-space debugging for i386 and x86_64
 * Windows user-space debugging for i386, x86_64, ARM and AArch64 (*)
 
 (*) Support for Windows is under active development. Basic functionality is
 expected to work, with functionality improving rapidly. ARM and AArch64 support
 is more experimental, with more known issues than the others.
+
+Support for the following architectures is in active development. For their
+current state, follow the links to their respective issues:
+
+* `RISC-V <https://github.com/llvm/llvm-project/issues/55383>`_
+* `LoongArch <https://github.com/llvm/llvm-project/issues/112693>`_
+* `WebAssembly <https://github.com/llvm/llvm-project/issues/150449>`_
 
 Get Involved
 ------------
@@ -102,10 +110,13 @@ Additionally it builds:
 See the :doc:`LLDB Build Page <resources/build>` for build instructions.
 
 Discussions about LLDB should go to the `LLDB forum
-<https://discourse.llvm.org/c/subprojects/lldb>`__. Commit
+<https://discourse.llvm.org/c/subprojects/lldb>`__ or the ``lldb`` channel on
+the `LLVM Discord server <https://discord.com/invite/xS7Z362>`__.
+
+For contributions follow the
+`LLVM contribution process <https://llvm.org/docs/Contributing.html>`__. Commit
 messages are automatically sent to the `lldb-commits
-<http://lists.llvm.org/mailman/listinfo/lldb-commits>`__ mailing list, and
-this is also the preferred mailing list for patch submissions.
+<http://lists.llvm.org/mailman/listinfo/lldb-commits>`__ mailing list.
 
 See the :doc:`Projects page <resources/projects>` if you are looking for some
 interesting areas to contribute to lldb.
@@ -113,57 +124,99 @@ interesting areas to contribute to lldb.
 .. toctree::
    :hidden:
    :maxdepth: 1
-   :caption: Using LLDB
+   :caption: Getting Started
 
    use/tutorial
    use/map
-   use/formatting
+   use/settings
+   use/troubleshooting
+   Man Page <man/lldb>
+
+.. toctree::
+   :hidden:
+   :maxdepth: 1
+   :caption: Using LLDB
+
    use/variable
+   use/formatting
+   use/repeat-commands
    use/symbolication
    use/symbols
-   use/remote
-   use/qemu-testing
-   use/intel_pt
    use/ondemand
-   use/troubleshooting
-   use/links
-   Man Page <man/lldb>
+   use/remote
+
+.. toctree::
+   :hidden:
+   :maxdepth: 1
+   :caption: IDE & Tool Integration
+
+   use/lldbdap
+   use/mcp
+
+.. toctree::
+   :hidden:
+   :maxdepth: 1
+   :caption: Platform-Specific Topics
+
+   use/aarch64-linux
+   use/intel_pt
 
 .. toctree::
    :hidden:
    :maxdepth: 1
    :caption: Scripting LLDB
 
-   use/python
    use/python-reference
    Python API <python_api>
-
+   Python Extensions <python_extensions>
 
 .. toctree::
    :hidden:
    :maxdepth: 1
-   :caption: Developing LLDB
+   :caption: Contributing to LLDB
 
    resources/overview
    resources/contributing
+   resources/lldbdap-contributing
    resources/build
    resources/test
+   resources/qemu-testing
    resources/debugging
    resources/fuzzing
-   resources/sbapi
-   resources/extensions
-   resources/caveats
-   resources/projects
-   Public C++ API <https://lldb.llvm.org/cpp_reference/namespacelldb.html>
-   Private C++ API <https://lldb.llvm.org/cpp_reference/index.html>
 
 .. toctree::
    :hidden:
    :maxdepth: 1
-   :caption: External Links
+   :caption: Architecture & Internals
 
+   Public C++ API <https://lldb.llvm.org/cpp_reference/namespacelldb.html>
+   Private C++ API <https://lldb.llvm.org/cpp_reference/index.html>
+   resources/sbapi
+   resources/dataformatters
+   resources/formatterbytecode
+   resources/addinglanguagesupport
+   resources/caveats
+   resources/projects
+
+.. toctree::
+   :hidden:
+   :maxdepth: 1
+   :caption: Protocol & Format Specifications
+
+   resources/lldbgdbremote
+   resources/lldbplatformpackets
+   resources/extensions
+   use/symbolfilejson
+
+.. toctree::
+   :hidden:
+   :maxdepth: 1
+   :caption: Resources
+
+   use/links
    Source Code <https://github.com/llvm/llvm-project>
    Releases <https://github.com/llvm/llvm-project/releases>
+   Discord Channel <https://discord.com/channels/636084430946959380/636732809708306432>
    Discussion Forums <https://discourse.llvm.org/c/subprojects/lldb/8>
    Developer Policy <https://llvm.org/docs/DeveloperPolicy.html>
    Bug Reports <https://github.com/llvm/llvm-project/issues?q=is%3Aissue+label%3Alldb+is%3Aopen>

@@ -4,11 +4,10 @@
 
 // REQUIRES: lldb
 // UNSUPPORTED: system-windows
-// XFAIL: system-darwin
 
-// RUN: %clang -g -O0 %s -o %t
+// RUN: %clang++ -g -O0 %s -o %t
 // RUN: %dexter --fail-lt 1.0 -w \
-// RUN:     --binary %t --debugger 'lldb' -v -- %s
+// RUN:     --binary %t %dexter_lldb_args -v -- %s
 
 #include <stdio.h>
 

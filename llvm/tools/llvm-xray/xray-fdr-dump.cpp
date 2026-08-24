@@ -50,7 +50,7 @@ static CommandRegistration Unused(&Dump, []() -> Error {
       EC);
   sys::fs::closeFile(*FDOrErr);
 
-  DataExtractor DE(StringRef(MappedFile.data(), MappedFile.size()), true, 8);
+  DataExtractor DE(StringRef(MappedFile.data(), MappedFile.size()), true);
   uint64_t OffsetPtr = 0;
 
   auto FileHeaderOrError = readBinaryFormatHeader(DE, OffsetPtr);
@@ -101,7 +101,7 @@ static CommandRegistration Unused(&Dump, []() -> Error {
 
   // Then we validate while printing each block.
   BlockVerifier BV;
-  for (auto ProcessThreadBlocks : Index) {
+  for (const auto &ProcessThreadBlocks : Index) {
     auto &Blocks = ProcessThreadBlocks.second;
     for (auto &B : Blocks) {
       for (auto *R : B.Records) {

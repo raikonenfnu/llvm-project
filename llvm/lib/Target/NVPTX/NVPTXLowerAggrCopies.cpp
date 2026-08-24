@@ -13,18 +13,17 @@
 //===----------------------------------------------------------------------===//
 
 #include "NVPTXLowerAggrCopies.h"
+#include "NVPTX.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/StackProtector.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
-#include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/LowerMemIntrinsics.h"
 
@@ -60,7 +59,7 @@ bool NVPTXLowerAggrCopies::runOnFunction(Function &F) {
   SmallVector<LoadInst *, 4> AggrLoads;
   SmallVector<MemIntrinsic *, 4> MemCalls;
 
-  const DataLayout &DL = F.getParent()->getDataLayout();
+  const DataLayout &DL = F.getDataLayout();
   LLVMContext &Context = F.getParent()->getContext();
   const TargetTransformInfo &TTI =
       getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
@@ -124,24 +123,22 @@ bool NVPTXLowerAggrCopies::runOnFunction(Function &F) {
 
   // Transform mem* intrinsic calls.
   for (MemIntrinsic *MemCall : MemCalls) {
+    bool Expanded = true;
     if (MemCpyInst *Memcpy = dyn_cast<MemCpyInst>(MemCall)) {
       expandMemCpyAsLoop(Memcpy, TTI);
     } else if (MemMoveInst *Memmove = dyn_cast<MemMoveInst>(MemCall)) {
-      expandMemMoveAsLoop(Memmove, TTI);
+      Expanded = expandMemMoveAsLoop(Memmove, TTI);
     } else if (MemSetInst *Memset = dyn_cast<MemSetInst>(MemCall)) {
-      expandMemSetAsLoop(Memset);
+      expandMemSetAsLoop(Memset, TTI);
     }
-    MemCall->eraseFromParent();
+    if (Expanded)
+      MemCall->eraseFromParent();
   }
 
   return true;
 }
 
 } // namespace
-
-namespace llvm {
-void initializeNVPTXLowerAggrCopiesPass(PassRegistry &);
-}
 
 INITIALIZE_PASS(NVPTXLowerAggrCopies, "nvptx-lower-aggr-copies",
                 "Lower aggregate copies, and llvm.mem* intrinsics into loops",

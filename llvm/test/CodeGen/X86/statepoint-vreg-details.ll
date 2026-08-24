@@ -31,7 +31,7 @@ define i1 @test_relocate(ptr addrspace(1) %a) gc "statepoint-example" {
 ; CHECK-PREG-LABEL: name:            test_relocate
 ; CHECK-PREG:    renamable $rbx = COPY $rdi
 ; CHECK-PREG:    renamable $rbx = STATEPOINT 0, 0, 0, @return_i1, 2, 0, 2, 0, 2, 0, 2, 1, killed renamable $rbx(tied-def 0), 2, 0, 2, 1, 0, 0, csr_64, implicit-def $rsp, implicit-def $ssp, implicit-def $al
-; CHECK-PREG:    renamable $bpl = COPY killed $al
+; CHECK-PREG:    renamable $bpl = COPY $al
 ; CHECK-PREG:    $rdi = COPY killed renamable $rbx
 ; CHECK-PREG:    CALL64pcrel32 @consume, csr_64, implicit $rsp, implicit $ssp, implicit $rdi, implicit-def $rsp, implicit-def $ssp
 
@@ -50,7 +50,7 @@ define void @test_mixed(ptr addrspace(1) %a, ptr addrspace(1) %b, ptr addrspace(
 ; CHECK-VREG:    %0:gr64 = COPY $rdi
 ; CHECK-VREG:    %3:gr64, %4:gr64, %5:gr64 = STATEPOINT 0, 0, 0, @func, 2, 0, 2, 0, 2, 0, 2, 4, %2(tied-def 0), 2, 0, %1(tied-def 1), %0(tied-def 2), 2, 0, 2, 4, 0, 0, 1, 1, 2, 2, 3, 3, csr_64, implicit-def $rsp, implicit-def $ssp
 ; CHECK-VREG:    %6:gr32 = MOV32r0 implicit-def dead $eflags
-; CHECK-VREG:    %7:gr64 = SUBREG_TO_REG 0, killed %6, %subreg.sub_32bit
+; CHECK-VREG:    %7:gr64 = SUBREG_TO_REG killed %6, %subreg.sub_32bit
 ; CHECK-VREG:    $rdi = COPY %5
 ; CHECK-VREG:    $rsi = COPY %7
 ; CHECK-VREG:    $rdx = COPY %4
@@ -361,7 +361,7 @@ define ptr addrspace(1) @test_isel_sched(ptr addrspace(1) %0, ptr addrspace(1) %
 ;CHECK-VREG:        TEST32rr %2, %2, implicit-def $eflags
 ;CHECK-VREG:        %3:gr64 = CMOV64rr %1, %0, 4, implicit $eflags
 ;CHECK-VREG:        %4:gr32 = MOV32r0 implicit-def dead $eflags
-;CHECK-VREG:        %5:gr64 = SUBREG_TO_REG 0, killed %4, %subreg.sub_32bit
+;CHECK-VREG:        %5:gr64 = SUBREG_TO_REG killed %4, %subreg.sub_32bit
 ;CHECK-VREG:        $rdi = COPY %5
 ;CHECK-VREG:        $rsi = COPY %3
 ;CHECK-VREG:        %6:gr64, %7:gr64 = STATEPOINT 10, 0, 2, @bar, $rdi, $rsi, 2, 0, 2, 0, 2, 0, 2, 2, %1(tied-def 0), %0(tied-def 1), 2, 0, 2, 2, 0, 0, 1, 1, csr_64, implicit-def $rsp, implicit-def $ssp

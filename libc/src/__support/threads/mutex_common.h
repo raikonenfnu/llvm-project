@@ -6,19 +6,23 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_LIBC_SRC_SUPPORT_THREAD_MUTEX_COMMON_H
-#define LLVM_LIBC_SRC_SUPPORT_THREAD_MUTEX_COMMON_H
+#ifndef LLVM_LIBC_SRC___SUPPORT_THREADS_MUTEX_COMMON_H
+#define LLVM_LIBC_SRC___SUPPORT_THREADS_MUTEX_COMMON_H
 
-namespace __llvm_libc {
+#include "src/__support/macros/config.h"
+
+namespace LIBC_NAMESPACE_DECL {
 
 enum class MutexError : int {
   NONE,
   BUSY,
+  DEADLOCK,
   TIMEOUT,
   UNLOCK_WITHOUT_LOCK,
   BAD_LOCK_STATE,
+  OVERFLOW,
 };
 
-} // namespace __llvm_libc
+} // namespace LIBC_NAMESPACE_DECL
 
-#endif // LLVM_LIBC_SRC_SUPPORT_THREAD_MUTEX_COMMON_H
+#endif // LLVM_LIBC_SRC___SUPPORT_THREADS_MUTEX_COMMON_H

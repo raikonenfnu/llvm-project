@@ -1,12 +1,126 @@
+if (LIBC_CONF_PRINTF_MODULAR)
+  message(FATAL_ERROR "modular printf is only supported in baremetal stdio")
+endif()
+
+add_entrypoint_object(
+  stdin
+  SRCS
+    stdin.cpp
+  HDRS
+    ../stdin.h
+  DEPENDS
+    libc.hdr.types.FILE
+)
+
+add_entrypoint_object(
+  stdout
+  SRCS
+    stdout.cpp
+  HDRS
+    ../stdout.h
+  DEPENDS
+    libc.hdr.types.FILE
+)
+
+add_entrypoint_object(
+  stderr
+  SRCS
+    stderr.cpp
+  HDRS
+    ../stderr.h
+  DEPENDS
+    libc.hdr.types.FILE
+)
+
 add_header_library(
   gpu_file
   HDRS
     file.h
   DEPENDS
+    libc.hdr.types.FILE
+    libc.hdr.stdio_macros
+    libc.src.__support.RPC.rpc_client
     libc.src.__support.common
     .stdin
     .stdout
     .stderr
+)
+
+add_header_library(
+  vfprintf_utils
+  HDRS
+    vfprintf_utils.h
+  DEPENDS
+    .gpu_file
+)
+
+add_entrypoint_object(
+  feof
+  SRCS
+    feof.cpp
+  HDRS
+    ../feof.h
+  DEPENDS
+    libc.hdr.types.FILE
+    libc.src.__support.RPC.rpc_client
+    .gpu_file
+)
+
+add_entrypoint_object(
+  ferror
+  SRCS
+    ferror.cpp
+  HDRS
+    ../ferror.h
+  DEPENDS
+    libc.hdr.types.FILE
+    libc.src.__support.RPC.rpc_client
+    .gpu_file
+)
+
+add_entrypoint_object(
+  fseek
+  SRCS
+    fseek.cpp
+  HDRS
+    ../fseek.h
+  DEPENDS
+    libc.hdr.types.FILE
+    .gpu_file
+)
+
+add_entrypoint_object(
+  ftell
+  SRCS
+    ftell.cpp
+  HDRS
+    ../ftell.h
+  DEPENDS
+    libc.hdr.types.FILE
+    .gpu_file
+)
+
+add_entrypoint_object(
+  fflush
+  SRCS
+    fflush.cpp
+  HDRS
+    ../fflush.h
+  DEPENDS
+    libc.hdr.types.FILE
+    .gpu_file
+)
+
+add_entrypoint_object(
+  clearerr
+  SRCS
+    clearerr.cpp
+  HDRS
+    ../clearerr.h
+  DEPENDS
+    libc.hdr.types.FILE
+    libc.src.__support.RPC.rpc_client
+    .gpu_file
 )
 
 add_entrypoint_object(
@@ -16,7 +130,8 @@ add_entrypoint_object(
   HDRS
     ../fopen.h
   DEPENDS
-    libc.include.stdio
+    libc.hdr.types.FILE
+    .gpu_file
 )
 
 add_entrypoint_object(
@@ -26,7 +141,9 @@ add_entrypoint_object(
   HDRS
     ../fclose.h
   DEPENDS
-    libc.include.stdio
+    libc.hdr.types.FILE
+    libc.hdr.stdio_macros
+    .gpu_file
 )
 
 add_entrypoint_object(
@@ -36,7 +153,8 @@ add_entrypoint_object(
   HDRS
     ../fread.h
   DEPENDS
-    libc.include.stdio
+    libc.hdr.types.FILE
+    .gpu_file
 )
 
 add_entrypoint_object(
@@ -46,7 +164,7 @@ add_entrypoint_object(
   HDRS
     ../puts.h
   DEPENDS
-    libc.include.stdio
+    libc.hdr.types.FILE
     .gpu_file
 )
 
@@ -57,7 +175,7 @@ add_entrypoint_object(
   HDRS
     ../fputs.h
   DEPENDS
-    libc.include.stdio
+    libc.hdr.types.FILE
     .gpu_file
 )
 
@@ -68,7 +186,7 @@ add_entrypoint_object(
   HDRS
     ../fwrite.h
   DEPENDS
-    libc.include.stdio
+    libc.hdr.types.FILE
     .gpu_file
 )
 
@@ -79,7 +197,7 @@ add_entrypoint_object(
   HDRS
     ../fputc.h
   DEPENDS
-    libc.include.stdio
+    libc.hdr.types.FILE
     .gpu_file
 )
 
@@ -90,7 +208,7 @@ add_entrypoint_object(
   HDRS
     ../putc.h
   DEPENDS
-    libc.include.stdio
+    libc.hdr.types.FILE
     .gpu_file
 )
 
@@ -101,36 +219,124 @@ add_entrypoint_object(
   HDRS
     ../putchar.h
   DEPENDS
-    libc.include.stdio
+    libc.hdr.types.FILE
     .gpu_file
 )
 
 add_entrypoint_object(
-  stdin
+  fgetc
   SRCS
-    stdin.cpp
+    fgetc.cpp
   HDRS
-    ../stdin.h
+    ../fgetc.h
   DEPENDS
-    libc.include.stdio
+    libc.hdr.types.FILE
+    .gpu_file
 )
 
 add_entrypoint_object(
-  stdout
+  getc
   SRCS
-    stdout.cpp
+    getc.cpp
   HDRS
-    ../stdout.h
+    ../getc.h
   DEPENDS
-    libc.include.stdio
+    libc.hdr.types.FILE
+    .gpu_file
 )
 
 add_entrypoint_object(
-  stderr
+  getchar
   SRCS
-    stderr.cpp
+    getchar.cpp
   HDRS
-    ../stderr.h
+    ../getchar.h
   DEPENDS
-    libc.include.stdio
+    libc.hdr.types.FILE
+    .gpu_file
+)
+
+add_entrypoint_object(
+  fgets
+  SRCS
+    fgets.cpp
+  HDRS
+    ../fgets.h
+  DEPENDS
+    libc.hdr.stdint_proxy
+    libc.hdr.types.FILE
+    .gpu_file
+)
+
+add_entrypoint_object(
+  ungetc
+  SRCS
+    ungetc.cpp
+  HDRS
+    ../ungetc.h
+  DEPENDS
+    libc.hdr.types.FILE
+    .gpu_file
+)
+
+add_entrypoint_object(
+  remove
+  SRCS
+    remove.cpp
+  HDRS
+    ../remove.h
+  DEPENDS
+    libc.hdr.types.FILE
+    .gpu_file
+)
+
+add_entrypoint_object(
+  printf
+  SRCS
+    printf.cpp
+  HDRS
+    ../printf.h
+  DEPENDS
+    .vfprintf_utils
+)
+
+add_entrypoint_object(
+  vprintf
+  SRCS
+    vprintf.cpp
+  HDRS
+    ../vprintf.h
+  DEPENDS
+    .vfprintf_utils
+)
+
+add_entrypoint_object(
+  fprintf
+  SRCS
+    fprintf.cpp
+  HDRS
+    ../fprintf.h
+  DEPENDS
+    .vfprintf_utils
+)
+
+add_entrypoint_object(
+  vfprintf
+  SRCS
+    vfprintf.cpp
+  HDRS
+    ../vfprintf.h
+  DEPENDS
+    .vfprintf_utils
+)
+
+add_entrypoint_object(
+  rename
+  SRCS
+    rename.cpp
+  HDRS
+    ../rename.h
+  DEPENDS
+    libc.hdr.types.FILE
+    .gpu_file
 )

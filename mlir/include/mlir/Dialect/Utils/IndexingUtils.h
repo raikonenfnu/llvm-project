@@ -18,7 +18,9 @@
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/iterator.h"
 #include <optional>
+#include <utility>
 
 namespace mlir {
 class ArrayAttr;
@@ -38,7 +40,7 @@ class ArrayAttr;
 /// Assuming `sizes` is `[s0, .. sn]`, return the vector<int64_t>
 ///   `[s1 * ... * sn, s2 * ... * sn, ..., sn, 1]`.
 ///
-/// `sizes` elements are asserted to be non-negative.
+/// `sizes` elements `s1` to `sn` are asserted to be non-negative.
 ///
 /// Return an empty vector if `sizes` is empty.
 SmallVector<int64_t> computeSuffixProduct(ArrayRef<int64_t> sizes);
@@ -61,7 +63,7 @@ int64_t computeProduct(ArrayRef<int64_t> basis);
 /// Return the number of elements of basis (i.e. the max linear index).
 /// Return `0` if `basis` is empty.
 ///
-/// `basis` elements are asserted to be non-negative.
+/// `basis` elements are asserted to be positive.
 ///
 /// Return `0` if `basis` is empty.
 inline int64_t computeMaxLinearIndex(ArrayRef<int64_t> basis) {
@@ -70,16 +72,16 @@ inline int64_t computeMaxLinearIndex(ArrayRef<int64_t> basis) {
 
 /// Return the linearized index of 'offsets' w.r.t. 'basis'.
 ///
-/// `basis` elements are asserted to be non-negative.
+/// `basis` elements are asserted to be positive.
 int64_t linearize(ArrayRef<int64_t> offsets, ArrayRef<int64_t> basis);
 
 /// Given the strides together with a linear index in the dimension space,
 /// return the vector-space offsets in each dimension for a de-linearized index.
-/// `strides` elements are asserted to be non-negative.
+/// `strides` elements are asserted to be positive.
 ///
 /// Let `li = linearIndex`, assuming `strides` are `[s0, .. sn]`, return the
 /// vector of int64_t
-///   `[li % s0, (li / s0) % s1, ..., (li / s0 / .. / sn-1) % sn]`
+///   `[li / s0, (li % s0) / s1, ..., (li % s0 % .. % sn-1) / sn]`
 SmallVector<int64_t> delinearize(int64_t linearIndex,
                                  ArrayRef<int64_t> strides);
 
@@ -87,7 +89,7 @@ SmallVector<int64_t> delinearize(int64_t linearIndex,
 /// dimensions of `shape`. This represents how many times `subShape` fits
 /// within `shape`. If integral division is not possible, return std::nullopt.
 /// The trailing `subShape.size()` entries of both shapes are assumed (and
-/// enforced) to only contain non-negative values.
+/// enforced) to only contain positive values.
 ///
 /// Examples:
 ///   - shapeRatio({3, 5, 8}, {2, 5, 2}) returns {3, 2, 1}.
@@ -179,7 +181,7 @@ AffineExpr linearize(MLIRContext *ctx, ArrayRef<AffineExpr> offsets,
 ///
 /// Let `li = linearIndex`, assuming `strides` are `[s0, .. sn]`, return the
 /// vector of AffineExpr
-///   `[li % s0, (li / s0) % s1, ..., (li / s0 / .. / sn-1) % sn]`
+///   `[li / s0, (li % s0) / s1, ..., (li % s0 % .. % sn-1) / sn]`
 ///
 /// It is the caller's responsibility to pass proper AffineExpr kind that result
 /// in valid AffineExpr (i.e. cannot multiply 2 AffineDimExpr or divide by an
@@ -195,6 +197,26 @@ SmallVector<AffineExpr> delinearize(AffineExpr linearIndex,
 // Permutation utils.
 //===----------------------------------------------------------------------===//
 
+template <typename T>
+SmallVector<T> applyPermutation(ArrayRef<T> input,
+                                ArrayRef<int64_t> permutation) {
+  assert(input.size() == permutation.size() &&
+         "expected input rank to equal permutation rank");
+  assert(
+      llvm::all_of(permutation, [&](size_t s) { return s < input.size(); }) &&
+      "permutation must be within input bounds");
+  auto permutationRange = llvm::map_range(
+      llvm::seq<unsigned>(0, input.size()),
+      [&](int64_t idx) -> T { return input[permutation[idx]]; });
+  return llvm::to_vector(permutationRange);
+}
+
+template <typename T>
+SmallVector<T> applyPermutation(const SmallVectorImpl<T> &input,
+                                ArrayRef<int64_t> permutation) {
+  return applyPermutation(ArrayRef(input), permutation);
+}
+
 /// Apply the permutation defined by `permutation` to `inVec`.
 /// Element `i` in `inVec` is mapped to location `j = permutation[i]`.
 /// E.g.: for an input vector `inVec = ['a', 'b', 'c']` and a permutation
@@ -203,14 +225,14 @@ SmallVector<AffineExpr> delinearize(AffineExpr linearIndex,
 template <typename T, unsigned N>
 void applyPermutationToVector(SmallVector<T, N> &inVec,
                               ArrayRef<int64_t> permutation) {
-  SmallVector<T, N> auxVec(inVec.size());
-  for (const auto &en : enumerate(permutation))
-    auxVec[en.index()] = inVec[en.value()];
-  inVec = auxVec;
+  inVec = applyPermutation(inVec, permutation);
 }
 
 /// Helper method to apply to inverse a permutation.
 SmallVector<int64_t> invertPermutationVector(ArrayRef<int64_t> permutation);
+
+/// Returns true if `permutation` is an identity permutation.
+bool isIdentityPermutation(ArrayRef<int64_t> permutation);
 
 /// Method to check if an interchange vector is a permutation.
 bool isPermutationVector(ArrayRef<int64_t> interchange);
@@ -223,6 +245,14 @@ bool isPermutationVector(ArrayRef<int64_t> interchange);
 SmallVector<int64_t>
 computePermutationVector(int64_t permSize, ArrayRef<int64_t> positions,
                          ArrayRef<int64_t> desiredPositions);
+
+/// Returns a permutation vector that drop the input dims in
+/// dropPositions from inputPerm.
+///
+/// For example, inputPerm = {2, 4, 0, 1, 3} and dropPositions= {1, 2} would
+/// result in a {2, 0, 1} permutation vector.
+SmallVector<int64_t> dropDims(ArrayRef<int64_t> inputPerm,
+                              ArrayRef<int64_t> dropPositions);
 
 /// Helper to return a subset of `arrayAttr` as a vector of int64_t.
 // TODO: Port everything relevant to DenseArrayAttr and drop this util.
@@ -238,7 +268,147 @@ SmallVector<int64_t> getI64SubArray(ArrayAttr arrayAttr, unsigned dropFront = 0,
 std::pair<AffineExpr, SmallVector<OpFoldResult>>
 computeLinearIndex(OpFoldResult sourceOffset, ArrayRef<OpFoldResult> strides,
                    ArrayRef<OpFoldResult> indices);
+std::pair<AffineExpr, SmallVector<OpFoldResult>>
+computeLinearIndex(OpFoldResult sourceOffset, ArrayRef<int64_t> strides,
+                   ArrayRef<Value> indices);
 
+//===----------------------------------------------------------------------===//
+// Utilities for decomposing larger shapes
+//===----------------------------------------------------------------------===//
+
+namespace detail {
+/// Encapsulates the set of parameters that are used to make tile offset
+/// calculations in the TileOffsetRangeIterator.
+class TileOffsetRangeImpl {
+public:
+  TileOffsetRangeImpl(ArrayRef<int64_t> shape, ArrayRef<int64_t> tileShape,
+                      ArrayRef<int64_t> loopOrder);
+
+  int64_t getMaxLinearIndex() const { return maxLinearIndex; }
+
+  SmallVector<int64_t> getStaticTileOffsets(int64_t linearIndex) const;
+
+  SmallVector<AffineExpr> getDynamicTileOffsets(AffineExpr linearIndex) const;
+
+  template <typename T>
+  SmallVector<T> getTileOffsets(T linearIndex) const {
+    if constexpr (std::is_same_v<T, int64_t>)
+      return getStaticTileOffsets(linearIndex);
+    else
+      return getDynamicTileOffsets(linearIndex);
+  }
+
+  size_t getRank() const { return tileShape.size(); }
+
+private:
+  /// The sub-shape that divides the larger outer shape (which is provided to
+  /// the constructor).
+  SmallVector<int64_t> tileShape;
+  /// The inverse permutation to the `loopOrder` permutation provided in the
+  /// constructor.
+  SmallVector<int64_t> inverseLoopOrder;
+  /// The strides for the basis 'div(shape, tileShape)' permuted by `loopOrder`.
+  SmallVector<int64_t> sliceStrides;
+  /// The maximum linear index in the iteration space given by basis 'div(shape,
+  /// tileShape)'.
+  int64_t maxLinearIndex;
+};
+
+/// The STL-style iterator implementation for StaticTileOffsetRange.
+template <typename ElementType>
+class TileOffsetRangeIterator
+    : public llvm::iterator_facade_base<TileOffsetRangeIterator<ElementType>,
+                                        std::forward_iterator_tag,
+                                        SmallVector<ElementType>> {
+public:
+  TileOffsetRangeIterator(const TileOffsetRangeImpl &params, ElementType index)
+      : params(params), index(index) {}
+
+  void operator++() { incrementIndex(1); }
+  TileOffsetRangeIterator operator++(int) {
+    const auto copy = *this;
+    ++*this;
+    return copy;
+  }
+
+  bool operator==(const TileOffsetRangeIterator &other) const {
+    return index == other.index;
+  }
+  bool operator!=(const TileOffsetRangeIterator &other) const {
+    return index != other.index;
+  }
+
+  SmallVector<ElementType> operator*() const {
+    return params.getTileOffsets(index);
+  }
+  void operator+=(int64_t offset) { incrementIndex(offset); }
+
+private:
+  void incrementIndex(int64_t offset) { index = index + offset; }
+  const TileOffsetRangeImpl params;
+  int64_t index;
+};
+} // namespace detail
+
+/// A range-style iterator that allows for iterating over the offsets of all
+/// potential tiles of size `tileShape` within the larger shape `shape`, using
+/// an ordering specified by `loopOrder`. The `loopOrder` specifies the order of
+/// unrolling by numbering the dimensions in order from "outer most for loop"
+/// (slowest changing) to "inner most for loop" (fastest changing).
+///
+/// For example, for `shape = {10, 20, 30}`, `tileShape = {5, 10, 15}`, and
+/// `loopOrder={2, 0, 1}`, the iterating over this range will yield offsets:
+///
+/// ```
+/// {0, 0,  0}, {0, 10,  0}, {5, 0,  0}, {5, 10,  0}, {0, 0, 15},
+/// {0, 10, 15}, {5, 0, 15}, {0, 10, 15}, {5, 10, 15}
+/// ```
+///
+/// This is useful in contexts where a vector computation over a larger shape
+/// needs to be unrolled to a set of operations on subsets of the original
+/// operands, such as during the "vector unrolling" transformations.
+///
+/// The size of `tileShape` must be less-than-or-equal-to the size of `shape`.a
+/// If the rank of `tileShape` is smaller than `shape`, then `tileShape`
+/// elements correspond to the trailing dimensions of `shape`, and the leading
+/// dimensions are considered untiled and `tileShape` is effectively prepended
+/// with the leading dims of `shape`.
+class StaticTileOffsetRange {
+public:
+  using IteratorTy = detail::TileOffsetRangeIterator<int64_t>;
+  using ParamsTy = detail::TileOffsetRangeImpl;
+
+  StaticTileOffsetRange(ArrayRef<int64_t> shape, ArrayRef<int64_t> tileShape,
+                        ArrayRef<int64_t> loopOrder)
+      : params(shape, tileShape, loopOrder), beginValue(params, 0),
+        pastEndValue(params, params.getMaxLinearIndex()) {
+    assert(shape.size() >= tileShape.size());
+    assert(loopOrder.size() == shape.size());
+  }
+
+  /// Create the range with identity loop order.
+  StaticTileOffsetRange(ArrayRef<int64_t> shape, ArrayRef<int64_t> tileShape)
+      : params(shape, tileShape,
+               llvm::to_vector(llvm::seq<int64_t>(0, shape.size()))),
+        beginValue(params, 0),
+        pastEndValue(params, params.getMaxLinearIndex()) {
+    assert(shape.size() >= tileShape.size());
+  }
+
+  IteratorTy begin() const { return beginValue; }
+  IteratorTy end() const { return pastEndValue; }
+
+  /// Returns the total number of tiles that fit in the larger shape.
+  size_t size() const { return params.getMaxLinearIndex(); }
+
+  /// Returns rank of the iterator's shape.
+  size_t getRank() const { return params.getRank(); }
+
+private:
+  const ParamsTy params;
+  IteratorTy beginValue;
+  IteratorTy pastEndValue;
+};
 } // namespace mlir
 
 #endif // MLIR_DIALECT_UTILS_INDEXINGUTILS_H

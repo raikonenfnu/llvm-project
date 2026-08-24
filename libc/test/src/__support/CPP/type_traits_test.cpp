@@ -6,12 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "include/llvm-libc-macros/stdfix-macros.h"
 #include "src/__support/CPP/type_traits.h"
+#include "src/__support/macros/config.h"
 #include "test/UnitTest/Test.h"
 
 // TODO: Split this file if it becomes too big.
 
-namespace __llvm_libc::cpp {
+namespace LIBC_NAMESPACE_DECL {
+namespace cpp {
 
 class Class {};
 union Union {};
@@ -112,6 +115,15 @@ TEST(LlvmLibcTypeTraitsTest, add_rvalue_reference_void) {
                          const volatile void>));
 }
 
+TEST(LlvmLibcTypeTraitsTest, aligned_storage) {
+  struct S {
+    int a, b;
+  };
+  aligned_storage_t<sizeof(S), alignof(S)> buf;
+  EXPECT_EQ(alignof(decltype(buf)), alignof(S));
+  EXPECT_EQ(sizeof(buf), sizeof(S));
+}
+
 TEST(LlvmLibcTypeTraitsTest, bool_constant) {
   EXPECT_TRUE((bool_constant<true>::value));
   EXPECT_FALSE((bool_constant<false>::value));
@@ -143,6 +155,119 @@ TEST(LlvmLibcTypeTraitsTest, false_type) { EXPECT_FALSE((false_type::value)); }
 
 TEST(LlvmLibcTypeTraitsTest, integral_constant) {
   EXPECT_EQ((integral_constant<int, 4>::value), 4);
+}
+
+namespace invoke_detail {
+
+enum State { INIT = 0, A_APPLY_CALLED, B_APPLY_CALLED };
+
+struct A {
+  State state = INIT;
+  virtual ~A() {}
+  virtual void apply() { state = A_APPLY_CALLED; }
+};
+
+struct B : public A {
+  virtual ~B() {}
+  virtual void apply() override { state = B_APPLY_CALLED; }
+};
+
+void free_function() {}
+int free_function_return_5() { return 5; }
+int free_function_passtrough(int value) { return value; }
+
+struct Delegate {
+  int (*ptr)(int) = &free_function_passtrough;
+};
+
+template <int tag> struct Tag {
+  static constexpr int value = tag;
+};
+
+struct Functor {
+  auto operator()() & { return Tag<0>(); }
+  auto operator()() const & { return Tag<1>(); }
+  auto operator()() && { return Tag<2>(); }
+  auto operator()() const && { return Tag<3>(); }
+
+  const Tag<0> &operator()(const Tag<0> &a) { return a; }
+  const Tag<0> &&operator()(const Tag<0> &&a) { return cpp::move(a); }
+  Tag<1> operator()(Tag<1> a) { return a; }
+};
+
+} // namespace invoke_detail
+
+TEST(LlvmLibcTypeTraitsTest, invoke) {
+  using namespace invoke_detail;
+  { // member function call
+    A a;
+    EXPECT_EQ(a.state, INIT);
+    invoke(&A::apply, a);
+    EXPECT_EQ(a.state, A_APPLY_CALLED);
+  }
+  { // overriden member function call
+    B b;
+    EXPECT_EQ(b.state, INIT);
+    invoke(&A::apply, b);
+    EXPECT_EQ(b.state, B_APPLY_CALLED);
+  }
+  { // free function
+    invoke(&free_function);
+    EXPECT_EQ(invoke(&free_function_return_5), 5);
+    EXPECT_EQ(invoke(&free_function_passtrough, 1), 1);
+  }
+  { // pointer member function call
+    Delegate d;
+    EXPECT_EQ(invoke(&Delegate::ptr, d, 2), 2);
+  }
+  { // Functor with several ref qualifier
+    Functor f;
+    const Functor cf;
+    EXPECT_EQ(invoke(f).value, 0);
+    EXPECT_EQ(invoke(cf).value, 1);
+    EXPECT_EQ(invoke(move(f)).value, 2);
+    EXPECT_EQ(invoke(move(cf)).value, 3);
+  }
+  { // lambda
+    EXPECT_EQ(invoke([]() -> int { return 2; }), 2);
+    EXPECT_EQ(invoke([](int value) -> int { return value; }, 1), 1);
+
+    const auto lambda = [](int) { return 0; };
+    EXPECT_EQ(invoke(lambda, 1), 0);
+  }
+}
+
+TEST(LlvmLibcTypeTraitsTest, invoke_result) {
+  using namespace invoke_detail;
+  EXPECT_TRUE((is_same_v<invoke_result_t<void (A::*)(), A>, void>));
+  EXPECT_TRUE((is_same_v<invoke_result_t<void (A::*)(), B>, void>));
+  EXPECT_TRUE((is_same_v<invoke_result_t<void (*)()>, void>));
+  EXPECT_TRUE((is_same_v<invoke_result_t<int (*)()>, int>));
+  EXPECT_TRUE((is_same_v<invoke_result_t<int (*)(int), int>, int>));
+  EXPECT_TRUE((
+      is_same_v<invoke_result_t<int (*Delegate::*)(int), Delegate, int>, int>));
+  // Functor with several ref qualifiers
+  EXPECT_TRUE((is_same_v<invoke_result_t<Functor &>, Tag<0>>));
+  EXPECT_TRUE((is_same_v<invoke_result_t<Functor const &>, Tag<1>>));
+  EXPECT_TRUE((is_same_v<invoke_result_t<Functor &&>, Tag<2>>));
+  EXPECT_TRUE((is_same_v<invoke_result_t<Functor const &&>, Tag<3>>));
+  // Functor with several arg qualifiers
+  EXPECT_TRUE(
+      (is_same_v<invoke_result_t<Functor &&, Tag<0> &>, const Tag<0> &>));
+  EXPECT_TRUE((is_same_v<invoke_result_t<Functor, Tag<0>>, const Tag<0> &&>));
+  EXPECT_TRUE((is_same_v<invoke_result_t<Functor, Tag<1>>, Tag<1>>));
+  {
+    auto lambda = []() {};
+    EXPECT_TRUE((is_same_v<invoke_result_t<decltype(lambda)>, void>));
+  }
+  {
+    auto lambda = []() { return 0; };
+    EXPECT_TRUE((is_same_v<invoke_result_t<decltype(lambda)>, int>));
+  }
+  {
+    auto lambda = [](int) -> double { return 0; };
+    EXPECT_TRUE((is_same_v<invoke_result_t<decltype(lambda), int>, double>));
+  }
 }
 
 using IntegralAndFloatingTypes =
@@ -285,7 +410,37 @@ TEST(LlvmLibcTypeTraitsTest, is_object) {
 
 // TODO is_scalar
 
-// TODO is_signed
+TEST(LlvmLibcTypeTraitsTest, is_signed) {
+  EXPECT_TRUE((is_signed_v<int>));
+  EXPECT_TRUE((is_signed_v<long>));
+  EXPECT_TRUE((is_signed_v<long long>));
+  EXPECT_FALSE((is_signed_v<unsigned int>));
+  EXPECT_FALSE((is_signed_v<unsigned long>));
+  EXPECT_FALSE((is_signed_v<unsigned long long>));
+  EXPECT_TRUE((is_signed_v<float>));
+  EXPECT_TRUE((is_signed_v<double>));
+  EXPECT_TRUE((is_signed_v<long double>));
+
+#ifdef LIBC_COMPILER_HAS_FIXED_POINT
+  // for fixed point types
+  EXPECT_TRUE((is_signed_v<fract>));
+  EXPECT_FALSE((is_signed_v<unsigned fract>));
+  EXPECT_TRUE((is_signed_v<accum>));
+  EXPECT_FALSE((is_signed_v<unsigned accum>));
+  EXPECT_TRUE((is_signed_v<sat fract>));
+  EXPECT_FALSE((is_signed_v<unsigned sat fract>));
+  EXPECT_TRUE((is_signed_v<sat accum>));
+  EXPECT_FALSE((is_signed_v<unsigned sat accum>));
+  EXPECT_TRUE((is_signed_v<short fract>));
+  EXPECT_FALSE((is_signed_v<unsigned short fract>));
+  EXPECT_TRUE((is_signed_v<short accum>));
+  EXPECT_FALSE((is_signed_v<unsigned short accum>));
+  EXPECT_TRUE((is_signed_v<long fract>));
+  EXPECT_FALSE((is_signed_v<unsigned long fract>));
+  EXPECT_TRUE((is_signed_v<long accum>));
+  EXPECT_FALSE((is_signed_v<unsigned long accum>));
+#endif
+}
 
 // TODO is_trivially_constructible
 
@@ -295,7 +450,37 @@ TEST(LlvmLibcTypeTraitsTest, is_object) {
 
 // TODO is_union
 
-// TODO is_unsigned
+TEST(LlvmLibcTypeTraitsTest, is_unsigned) {
+  EXPECT_FALSE((is_unsigned_v<int>));
+  EXPECT_FALSE((is_unsigned_v<long>));
+  EXPECT_FALSE((is_unsigned_v<long long>));
+  EXPECT_TRUE((is_unsigned_v<unsigned int>));
+  EXPECT_TRUE((is_unsigned_v<unsigned long>));
+  EXPECT_TRUE((is_unsigned_v<unsigned long long>));
+  EXPECT_FALSE((is_unsigned_v<float>));
+  EXPECT_FALSE((is_unsigned_v<double>));
+  EXPECT_FALSE((is_unsigned_v<long double>));
+
+#ifdef LIBC_COMPILER_HAS_FIXED_POINT
+  // for fixed point types
+  EXPECT_FALSE((is_unsigned_v<fract>));
+  EXPECT_TRUE((is_unsigned_v<unsigned fract>));
+  EXPECT_FALSE((is_unsigned_v<accum>));
+  EXPECT_TRUE((is_unsigned_v<unsigned accum>));
+  EXPECT_FALSE((is_unsigned_v<sat fract>));
+  EXPECT_TRUE((is_unsigned_v<unsigned sat fract>));
+  EXPECT_FALSE((is_unsigned_v<sat accum>));
+  EXPECT_TRUE((is_unsigned_v<unsigned sat accum>));
+  EXPECT_FALSE((is_unsigned_v<short fract>));
+  EXPECT_TRUE((is_unsigned_v<unsigned short fract>));
+  EXPECT_FALSE((is_unsigned_v<short accum>));
+  EXPECT_TRUE((is_unsigned_v<unsigned short accum>));
+  EXPECT_FALSE((is_unsigned_v<long fract>));
+  EXPECT_TRUE((is_unsigned_v<unsigned long fract>));
+  EXPECT_FALSE((is_unsigned_v<long accum>));
+  EXPECT_TRUE((is_unsigned_v<unsigned long accum>));
+#endif
+}
 
 // TODO is_void
 
@@ -315,8 +500,31 @@ TEST(LlvmLibcTypeTraitsTest, is_object) {
 
 TEST(LlvmLibcTypeTraitsTest, true_type) { EXPECT_TRUE((true_type::value)); }
 
+struct CompilerLeadingPadded {
+  char b;
+  int a;
+};
+
+struct CompilerTrailingPadded {
+  int a;
+  char b;
+};
+
+struct alignas(long long) ManuallyPadded {
+  int b;
+  char padding[sizeof(long long) - sizeof(int)];
+};
+
+TEST(LlvmLibcTypeTraitsTest, has_unique_object_representations) {
+  EXPECT_TRUE(has_unique_object_representations<int>::value);
+  EXPECT_FALSE(has_unique_object_representations_v<CompilerLeadingPadded>);
+  EXPECT_FALSE(has_unique_object_representations_v<CompilerTrailingPadded>);
+  EXPECT_TRUE(has_unique_object_representations_v<ManuallyPadded>);
+}
+
 // TODO type_identity
 
 // TODO void_t
 
-} // namespace __llvm_libc::cpp
+} // namespace cpp
+} // namespace LIBC_NAMESPACE_DECL

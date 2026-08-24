@@ -87,11 +87,9 @@ class DefaultController(DebuggerControllerBase):
         self.step_collection.debugger = self.debugger.debugger_info
         self._break_point_all_lines()
         self.debugger.launch(cmdline)
-
         for command_obj in chain.from_iterable(self.step_collection.commands.values()):
             self.watches.update(command_obj.get_watches())
         early_exit_conditions = self._get_early_exit_conditions()
-
         timed_out = False
         total_timeout = Timeout(self.context.options.timeout_total)
         max_steps = self.context.options.max_steps
@@ -130,7 +128,7 @@ class DefaultController(DebuggerControllerBase):
                     break
 
             if in_source_file(self.source_files, step_info):
-                self.debugger.step()
+                self.debugger.step_in()
             else:
                 self.debugger.go()
 

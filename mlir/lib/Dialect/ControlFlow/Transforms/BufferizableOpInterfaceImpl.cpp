@@ -8,12 +8,8 @@
 
 #include "mlir/Dialect/ControlFlow/Transforms/BufferizableOpInterfaceImpl.h"
 
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Bufferization/IR/UnstructuredControlFlow.h"
-#include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/IR/Dialect.h"
 #include "mlir/IR/Operation.h"
 
 using namespace mlir;
@@ -39,16 +35,12 @@ struct BranchLikeOpInterface
 
   LogicalResult verifyAnalysis(Operation *op,
                                const AnalysisState &state) const {
-    const auto &options =
-        static_cast<const OneShotBufferizationOptions &>(state.getOptions());
-    if (options.allowReturnAllocs)
-      return success();
-    return op->emitOpError(
-        "op cannot be bufferized without allow-return-allocs");
+    return success();
   }
 
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
-                          const BufferizationOptions &options) const {
+                          const BufferizationOptions &options,
+                          BufferizationState &state) const {
     // The operands of this op are bufferized together with the block signature.
     return success();
   }

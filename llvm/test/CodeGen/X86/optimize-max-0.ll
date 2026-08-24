@@ -41,7 +41,7 @@ define void @foo(ptr %r, i32 %s, i32 %w, i32 %x, ptr %j, i32 %d) nounwind {
 ; CHECK-NEXT:    xorl %ecx, %ecx
 ; CHECK-NEXT:    movl %edi, %edx
 ; CHECK-NEXT:    xorl %edi, %edi
-; CHECK-NEXT:    .p2align 4, 0x90
+; CHECK-NEXT:    .p2align 4
 ; CHECK-NEXT:  LBB0_4: ## %bb6
 ; CHECK-NEXT:    ## =>This Inner Loop Header: Depth=1
 ; CHECK-NEXT:    movzbl (%eax,%edi,2), %ebx
@@ -89,9 +89,9 @@ define void @foo(ptr %r, i32 %s, i32 %w, i32 %x, ptr %j, i32 %d) nounwind {
 ; CHECK-NEXT:    movl %edx, {{[-0-9]+}}(%e{{[sb]}}p) ## 4-byte Spill
 ; CHECK-NEXT:    movl (%esp), %edx ## 4-byte Reload
 ; CHECK-NEXT:    addl %edx, %ecx
-; CHECK-NEXT:    xorl %edx, %edx
 ; CHECK-NEXT:    xorl %edi, %edi
-; CHECK-NEXT:    .p2align 4, 0x90
+; CHECK-NEXT:    xorl %edx, %edx
+; CHECK-NEXT:    .p2align 4
 ; CHECK-NEXT:  LBB0_9: ## %bb13
 ; CHECK-NEXT:    ## =>This Loop Header: Depth=1
 ; CHECK-NEXT:    ## Child Loop BB0_10 Depth 2
@@ -102,7 +102,7 @@ define void @foo(ptr %r, i32 %s, i32 %w, i32 %x, ptr %j, i32 %d) nounwind {
 ; CHECK-NEXT:    imull {{[0-9]+}}(%esp), %edi
 ; CHECK-NEXT:    addl {{[-0-9]+}}(%e{{[sb]}}p), %edi ## 4-byte Folded Reload
 ; CHECK-NEXT:    xorl %ebx, %ebx
-; CHECK-NEXT:    .p2align 4, 0x90
+; CHECK-NEXT:    .p2align 4
 ; CHECK-NEXT:  LBB0_10: ## %bb14
 ; CHECK-NEXT:    ## Parent Loop BB0_9 Depth=1
 ; CHECK-NEXT:    ## => This Inner Loop Header: Depth=2
@@ -150,7 +150,7 @@ define void @foo(ptr %r, i32 %s, i32 %w, i32 %x, ptr %j, i32 %d) nounwind {
 ; CHECK-NEXT:    leal 15(%esi), %eax
 ; CHECK-NEXT:    andl $-16, %eax
 ; CHECK-NEXT:    movl %eax, {{[-0-9]+}}(%e{{[sb]}}p) ## 4-byte Spill
-; CHECK-NEXT:    .p2align 4, 0x90
+; CHECK-NEXT:    .p2align 4
 ; CHECK-NEXT:  LBB0_17: ## %bb23
 ; CHECK-NEXT:    ## =>This Inner Loop Header: Depth=1
 ; CHECK-NEXT:    subl $4, %esp
@@ -184,7 +184,7 @@ define void @foo(ptr %r, i32 %s, i32 %w, i32 %x, ptr %j, i32 %d) nounwind {
 ; CHECK-NEXT:    andl $-16, %eax
 ; CHECK-NEXT:    movl %eax, {{[-0-9]+}}(%e{{[sb]}}p) ## 4-byte Spill
 ; CHECK-NEXT:    movl {{[0-9]+}}(%esp), %edi
-; CHECK-NEXT:    .p2align 4, 0x90
+; CHECK-NEXT:    .p2align 4
 ; CHECK-NEXT:  LBB0_21: ## %bb30
 ; CHECK-NEXT:    ## =>This Inner Loop Header: Depth=1
 ; CHECK-NEXT:    subl $4, %esp
@@ -327,7 +327,7 @@ bb14:                                             ; preds = %bb15, %bb.nph3
   %29 = getelementptr i8, ptr %j, i32 %.sum
   store i8 %28, ptr %29, align 1
   %30 = shl i32 %x.12, 2
-  %31 = or i32 %30, 2
+  %31 = or disjoint i32 %30, 2
   %32 = add i32 %31, %21
   %33 = getelementptr i8, ptr %r, i32 %32
   %34 = load i8, ptr %33, align 1
@@ -482,7 +482,7 @@ define void @bar(ptr %r, i32 %s, i32 %w, i32 %x, ptr %j, i32 %d) nounwind {
 ; CHECK-NEXT:    xorl %ecx, %ecx
 ; CHECK-NEXT:    movl %esi, %edx
 ; CHECK-NEXT:    xorl %esi, %esi
-; CHECK-NEXT:    .p2align 4, 0x90
+; CHECK-NEXT:    .p2align 4
 ; CHECK-NEXT:  LBB1_4: ## %bb6
 ; CHECK-NEXT:    ## =>This Inner Loop Header: Depth=1
 ; CHECK-NEXT:    movzbl (%eax,%esi,2), %ebx
@@ -492,7 +492,6 @@ define void @bar(ptr %r, i32 %s, i32 %w, i32 %x, ptr %j, i32 %d) nounwind {
 ; CHECK-NEXT:    jb LBB1_4
 ; CHECK-NEXT:  ## %bb.5: ## %bb9
 ; CHECK-NEXT:    ## in Loop: Header=BB1_4 Depth=1
-; CHECK-NEXT:    movl %edi, %ebx
 ; CHECK-NEXT:    incl %ecx
 ; CHECK-NEXT:    addl {{[0-9]+}}(%esp), %eax
 ; CHECK-NEXT:    addl %edi, %edx
@@ -527,38 +526,38 @@ define void @bar(ptr %r, i32 %s, i32 %w, i32 %x, ptr %j, i32 %d) nounwind {
 ; CHECK-NEXT:    movl {{[-0-9]+}}(%e{{[sb]}}p), %edx ## 4-byte Reload
 ; CHECK-NEXT:    addl %edx, %eax
 ; CHECK-NEXT:    xorl %edx, %edx
-; CHECK-NEXT:    xorl %ebx, %ebx
-; CHECK-NEXT:    .p2align 4, 0x90
+; CHECK-NEXT:    xorl %esi, %esi
+; CHECK-NEXT:    .p2align 4
 ; CHECK-NEXT:  LBB1_9: ## %bb13
 ; CHECK-NEXT:    ## =>This Loop Header: Depth=1
 ; CHECK-NEXT:    ## Child Loop BB1_10 Depth 2
-; CHECK-NEXT:    movl %ebx, {{[-0-9]+}}(%e{{[sb]}}p) ## 4-byte Spill
-; CHECK-NEXT:    andl $1, %ebx
 ; CHECK-NEXT:    movl %edx, (%esp) ## 4-byte Spill
-; CHECK-NEXT:    addl %edx, %ebx
-; CHECK-NEXT:    imull {{[0-9]+}}(%esp), %ebx
-; CHECK-NEXT:    addl {{[-0-9]+}}(%e{{[sb]}}p), %ebx ## 4-byte Folded Reload
+; CHECK-NEXT:    andl $1, %edx
+; CHECK-NEXT:    movl %esi, {{[-0-9]+}}(%e{{[sb]}}p) ## 4-byte Spill
+; CHECK-NEXT:    addl %esi, %edx
+; CHECK-NEXT:    imull {{[0-9]+}}(%esp), %edx
+; CHECK-NEXT:    addl {{[-0-9]+}}(%e{{[sb]}}p), %edx ## 4-byte Folded Reload
 ; CHECK-NEXT:    xorl %esi, %esi
-; CHECK-NEXT:    .p2align 4, 0x90
+; CHECK-NEXT:    .p2align 4
 ; CHECK-NEXT:  LBB1_10: ## %bb14
 ; CHECK-NEXT:    ## Parent Loop BB1_9 Depth=1
 ; CHECK-NEXT:    ## => This Inner Loop Header: Depth=2
-; CHECK-NEXT:    movzbl -2(%ebx,%esi,4), %edx
-; CHECK-NEXT:    movb %dl, (%eax,%esi)
-; CHECK-NEXT:    movzbl (%ebx,%esi,4), %edx
-; CHECK-NEXT:    movb %dl, (%ecx,%esi)
+; CHECK-NEXT:    movzbl -2(%edx,%esi,4), %ebx
+; CHECK-NEXT:    movb %bl, (%eax,%esi)
+; CHECK-NEXT:    movzbl (%edx,%esi,4), %ebx
+; CHECK-NEXT:    movb %bl, (%ecx,%esi)
 ; CHECK-NEXT:    incl %esi
 ; CHECK-NEXT:    cmpl %ebp, %esi
 ; CHECK-NEXT:    jb LBB1_10
 ; CHECK-NEXT:  ## %bb.11: ## %bb17
 ; CHECK-NEXT:    ## in Loop: Header=BB1_9 Depth=1
-; CHECK-NEXT:    movl {{[-0-9]+}}(%e{{[sb]}}p), %ebx ## 4-byte Reload
-; CHECK-NEXT:    incl %ebx
-; CHECK-NEXT:    addl %ebp, %ecx
 ; CHECK-NEXT:    movl (%esp), %edx ## 4-byte Reload
-; CHECK-NEXT:    addl $2, %edx
+; CHECK-NEXT:    incl %edx
+; CHECK-NEXT:    addl %ebp, %ecx
+; CHECK-NEXT:    movl {{[-0-9]+}}(%e{{[sb]}}p), %esi ## 4-byte Reload
+; CHECK-NEXT:    addl $2, %esi
 ; CHECK-NEXT:    addl %ebp, %eax
-; CHECK-NEXT:    cmpl {{[-0-9]+}}(%e{{[sb]}}p), %ebx ## 4-byte Folded Reload
+; CHECK-NEXT:    cmpl {{[-0-9]+}}(%e{{[sb]}}p), %edx ## 4-byte Folded Reload
 ; CHECK-NEXT:    jb LBB1_9
 ; CHECK-NEXT:  LBB1_13: ## %bb20
 ; CHECK-NEXT:    movl {{[0-9]+}}(%esp), %esi
@@ -588,7 +587,7 @@ define void @bar(ptr %r, i32 %s, i32 %w, i32 %x, ptr %j, i32 %d) nounwind {
 ; CHECK-NEXT:    movl {{[-0-9]+}}(%e{{[sb]}}p), %eax ## 4-byte Reload
 ; CHECK-NEXT:    movl {{[0-9]+}}(%esp), %edx
 ; CHECK-NEXT:    leal (%edx,%eax), %ebp
-; CHECK-NEXT:    .p2align 4, 0x90
+; CHECK-NEXT:    .p2align 4
 ; CHECK-NEXT:  LBB1_17: ## %bb23
 ; CHECK-NEXT:    ## =>This Inner Loop Header: Depth=1
 ; CHECK-NEXT:    subl $4, %esp
@@ -626,7 +625,7 @@ define void @bar(ptr %r, i32 %s, i32 %w, i32 %x, ptr %j, i32 %d) nounwind {
 ; CHECK-NEXT:    andl $-16, %eax
 ; CHECK-NEXT:    movl %eax, (%esp) ## 4-byte Spill
 ; CHECK-NEXT:    movl {{[0-9]+}}(%esp), %ebp
-; CHECK-NEXT:    .p2align 4, 0x90
+; CHECK-NEXT:    .p2align 4
 ; CHECK-NEXT:  LBB1_21: ## %bb30
 ; CHECK-NEXT:    ## =>This Inner Loop Header: Depth=1
 ; CHECK-NEXT:    subl $4, %esp
@@ -764,7 +763,7 @@ bb14:                                             ; preds = %bb15, %bb.nph3
   %29 = getelementptr i8, ptr %j, i32 %.sum
   store i8 %28, ptr %29, align 1
   %30 = shl i32 %x.12, 2
-  %31 = or i32 %30, 2
+  %31 = or disjoint i32 %30, 2
   %32 = add i32 %31, %21
   %33 = getelementptr i8, ptr %r, i32 %32
   %34 = load i8, ptr %33, align 1

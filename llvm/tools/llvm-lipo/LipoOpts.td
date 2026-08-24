@@ -44,6 +44,11 @@ def extract : Option<["-", "--"], "extract", KIND_SEPARATE>,
            HelpText<"Create a universal output file containing only the specified "
                     "arch_type from the fat input file. Requires -output option">;
 
+def remove : Option<["-", "--"], "remove", KIND_SEPARATE>,
+           Group<action_group>,
+           HelpText<"Remove the specified arch_type from the universal input "
+                    "file. Requires -output option">;
+
 def create : Option<["-", "--"], "create", KIND_FLAG>,
              Group<action_group>,
              HelpText<"Create a universal binary output file from the input "
@@ -58,3 +63,6 @@ def replace
 def output : Option<["-", "--"], "output", KIND_SEPARATE>,
              HelpText<"Create output file with specified name">;
 def o : JoinedOrSeparate<["-"], "o">, Alias<output>;
+
+def fat64 : Option<["-", "--"], "fat64", KIND_FLAG>,
+            HelpText<"Use 64 bits Universal Mach-O format">;

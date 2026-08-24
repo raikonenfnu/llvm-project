@@ -129,22 +129,27 @@ struct UnwindInfoSections {
     defined(_LIBUNWIND_SUPPORT_COMPACT_UNWIND) ||                              \
     defined(_LIBUNWIND_USE_DL_ITERATE_PHDR)
   // No dso_base for SEH.
-  uintptr_t       dso_base;
+  uintptr_t __ptrauth_unwind_uis_dso_base
+                  dso_base = 0;
 #endif
 #if defined(_LIBUNWIND_USE_DL_ITERATE_PHDR)
   size_t          text_segment_length;
 #endif
 #if defined(_LIBUNWIND_SUPPORT_DWARF_UNWIND)
-  uintptr_t       dwarf_section;
-  size_t          dwarf_section_length;
+  uintptr_t __ptrauth_unwind_uis_dwarf_section
+                  dwarf_section = 0;
+  size_t __ptrauth_unwind_uis_dwarf_section_length
+                  dwarf_section_length = 0;
 #endif
 #if defined(_LIBUNWIND_SUPPORT_DWARF_INDEX)
   uintptr_t       dwarf_index_section;
   size_t          dwarf_index_section_length;
 #endif
 #if defined(_LIBUNWIND_SUPPORT_COMPACT_UNWIND)
-  uintptr_t       compact_unwind_section;
-  size_t          compact_unwind_section_length;
+  uintptr_t __ptrauth_unwind_uis_compact_unwind_section
+                  compact_unwind_section = 0;
+  size_t __ptrauth_unwind_uis_compact_unwind_section_length
+                  compact_unwind_section_length = 0;
 #endif
 #if defined(_LIBUNWIND_ARM_EHABI)
   uintptr_t       arm_section;
@@ -196,11 +201,16 @@ public:
   static int64_t  getSLEB128(pint_t &addr, pint_t end);
 
   pint_t getEncodedP(pint_t &addr, pint_t end, uint8_t encoding,
-                     pint_t datarelBase = 0);
-  bool findFunctionName(pint_t addr, char *buf, size_t bufLen,
-                        unw_word_t *offset);
-  bool findUnwindSections(pint_t targetAddr, UnwindInfoSections &info);
-  bool findOtherFDE(pint_t targetAddr, pint_t &fde);
+                     pint_t datarelBase = 0, pint_t *resultAddr = nullptr);
+  template <typename R>
+  bool findFunctionName(typename R::link_hardened_reg_arg_t addr, char *buf,
+                        size_t bufLen, unw_word_t *offset);
+  template <typename R>
+  bool findUnwindSections(typename R::link_hardened_reg_arg_t targetAddr,
+                          UnwindInfoSections &info);
+  template <typename R>
+  bool findOtherFDE(typename R::link_hardened_reg_arg_t targetAddr,
+                    pint_t &fde);
 
   static LocalAddressSpace sThisAddressSpace;
 };
@@ -269,7 +279,7 @@ inline int64_t LocalAddressSpace::getSLEB128(pint_t &addr, pint_t end) {
 
 inline LocalAddressSpace::pint_t
 LocalAddressSpace::getEncodedP(pint_t &addr, pint_t end, uint8_t encoding,
-                               pint_t datarelBase) {
+                               pint_t datarelBase, pint_t *resultAddr) {
   pint_t startAddr = addr;
   const uint8_t *p = (uint8_t *)addr;
   pint_t result;
@@ -353,8 +363,14 @@ LocalAddressSpace::getEncodedP(pint_t &addr, pint_t end, uint8_t encoding,
     break;
   }
 
-  if (encoding & DW_EH_PE_indirect)
+  if (encoding & DW_EH_PE_indirect) {
+    if (resultAddr)
+      *resultAddr = result;
     result = getP(result);
+  } else {
+    if (resultAddr)
+      *resultAddr = startAddr;
+  }
 
   return result;
 }
@@ -414,8 +430,8 @@ static bool checkForUnwindInfoSegment(const Elf_Phdr *phdr, size_t image_base,
     cbdata->sects->dwarf_index_section = eh_frame_hdr_start;
     cbdata->sects->dwarf_index_section_length = phdr->p_memsz;
     if (EHHeaderParser<LocalAddressSpace>::decodeEHHdr(
-            *cbdata->addressSpace, eh_frame_hdr_start, phdr->p_memsz,
-            hdrInfo)) {
+            *cbdata->addressSpace, eh_frame_hdr_start,
+            eh_frame_hdr_start + phdr->p_memsz, hdrInfo)) {
       // .eh_frame_hdr records the start of .eh_frame, but not its size.
       // Rely on a zero terminator to find the end of the section.
       cbdata->sects->dwarf_section = hdrInfo.eh_frame_ptr;
@@ -486,9 +502,9 @@ static int findUnwindSectionsByPhdr(struct dl_phdr_info *pinfo,
 
 #endif  // defined(_LIBUNWIND_USE_DL_ITERATE_PHDR)
 
-
-inline bool LocalAddressSpace::findUnwindSections(pint_t targetAddr,
-                                                  UnwindInfoSections &info) {
+template <typename R>
+inline bool LocalAddressSpace::findUnwindSections(
+    typename R::link_hardened_reg_arg_t targetAddr, UnwindInfoSections &info) {
 #ifdef __APPLE__
   dyld_unwind_sections dyldInfo;
   if (_dyld_find_unwind_sections((void *)targetAddr, &dyldInfo)) {
@@ -638,7 +654,8 @@ inline bool LocalAddressSpace::findUnwindSections(pint_t targetAddr,
     info.dwarf_index_section_length = SIZE_MAX;
     EHHeaderParser<LocalAddressSpace>::EHHeaderInfo hdrInfo;
     if (!EHHeaderParser<LocalAddressSpace>::decodeEHHdr(
-            *this, info.dwarf_index_section, info.dwarf_index_section_length,
+            *this, info.dwarf_index_section,
+            info.dwarf_index_section + info.dwarf_index_section_length,
             hdrInfo)) {
       return false;
     }
@@ -649,7 +666,7 @@ inline bool LocalAddressSpace::findUnwindSections(pint_t targetAddr,
     return true;
   }
 #endif
-  dl_iterate_cb_data cb_data = {this, &info, targetAddr};
+  dl_iterate_cb_data cb_data = {this, &info, static_cast<pint_t>(targetAddr)};
   int found = dl_iterate_phdr(findUnwindSectionsByPhdr, &cb_data);
   return static_cast<bool>(found);
 #endif
@@ -657,16 +674,21 @@ inline bool LocalAddressSpace::findUnwindSections(pint_t targetAddr,
   return false;
 }
 
-inline bool LocalAddressSpace::findOtherFDE(pint_t targetAddr, pint_t &fde) {
+template <typename R>
+inline bool
+LocalAddressSpace::findOtherFDE(typename R::link_hardened_reg_arg_t targetAddr,
+                                pint_t &fde) {
   // TO DO: if OS has way to dynamically register FDEs, check that.
   (void)targetAddr;
   (void)fde;
   return false;
 }
 
-inline bool LocalAddressSpace::findFunctionName(pint_t addr, char *buf,
-                                                size_t bufLen,
-                                                unw_word_t *offset) {
+template <typename R>
+inline bool
+LocalAddressSpace::findFunctionName(typename R::link_hardened_reg_arg_t addr,
+                                    char *buf, size_t bufLen,
+                                    unw_word_t *offset) {
 #if _LIBUNWIND_USE_DLADDR
   Dl_info dyldInfo;
   if (dladdr((void *)addr, &dyldInfo)) {
